@@ -1,0 +1,45 @@
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ensure con-pilot server is running
+        run: |
+          HOST="${CON_PILOT_HOST:-localhost}"
+          PORT="${CON_PILOT_PORT:-8000}"
+          if curl -sf "http://$HOST:$PORT/health" >/dev/null 2>&1; then
+            echo "con-pilot already running"
+          else
+            echo "Starting con-pilot server..."
+            CON_PILOT="$CONDUCTOR_HOME/python/con-pilot/.venv/bin/con-pilot"
+            LOG="$CONDUCTOR_HOME/.github/scripts/sync_agents.log"
+            mkdir -p "$(dirname "$LOG")"
+            nohup "$CON_PILOT" serve >> "$LOG" 2>&1 &
+            for i in $(seq 1 15); do
+              if curl -sf "http://$HOST:$PORT/health" >/dev/null 2>&1; then
+                echo "con-pilot server is ready"
+                break
+              fi
+              sleep 1
+            done
+          fi
+
+      - name: Export session environment variables
+        run: |
+          HOST="${CON_PILOT_HOST:-localhost}"
+          PORT="${CON_PILOT_PORT:-8000}"
+          curl -sf "http://$HOST:$PORT/setup-env" \
+            | python3 -c "import json,sys; [print(f'{k}={v}') for k,v in json.load(sys.stdin).items()]" \
+            >> $GITHUB_ENV
+
+      - name: Verify conductor agent
+        run: |
+          AGENT="$CONDUCTOR_HOME/.github/agents/conductor.agent.md"
+          if [ -f "$AGENT" ]; then
+            echo "Conductor agent is ready"
+          else
+            echo "::warning::Conductor agent file not found at $AGENT"
+          fi
+

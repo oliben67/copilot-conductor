@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+# ── Conductor Self-Extracting Installer ───────────────────────────────────────
+# Version: __VERSION__
+# Built:   __BUILD_DATE__
+# Usage:   ./setup.sh install | uninstall | update
+set -euo pipefail
+
+VERSION="__VERSION__"
+CON_PILOT_VERSION="__CON_PILOT_VERSION__"
+APP_ID="io.conductor.ConPilot"
+BASHRC="$HOME/.bashrc"
+DEFAULT_HOME="$HOME/.conductor"
+
+# ── Usage ─────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+Conductor Setup v${VERSION}  (con-pilot v${CON_PILOT_VERSION})
+
+Usage:
+  ./setup.sh install   CONDUCTOR_HOME     Extract and install Conductor
+  ./setup.sh uninstall                     Remove Conductor completely
+  ./setup.sh update                        Update to this version (v${VERSION})
+  ./setup.sh version                       Show bundled version
+  ./setup.sh help                          Show this help message
+
+Arguments:
+  CONDUCTOR_HOME   Target directory (required for install)
+EOF
+}
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+archive_line() {
+  # Line number where the tar.gz payload begins
+  awk '/^__ARCHIVE__$/{print NR + 1; exit 0}' "$0"
+}
+
+extract_to() {
+  local dest="$1"
+  mkdir -p "$dest"
+  tail -n +"$(archive_line)" "$0" | tar xzf - -C "$dest" --strip-components=1
+}
+
+persist_var() {
+  local var_name="$1" var_value="$2"
+  if grep -q "^export ${var_name}=" "$BASHRC" 2>/dev/null; then
+    sed -i "s|^export ${var_name}=.*|export ${var_name}=\"${var_value}\"|" "$BASHRC"
+  else
+    printf 'export %s="%s"\n' "$var_name" "$var_value" >> "$BASHRC"
+  fi
+}
+
+ensure_flatpak_runtime() {
+  if ! flatpak --user info org.freedesktop.Platform//24.08 &>/dev/null; then
+    echo "Installing Flatpak runtime (org.freedesktop.Platform 24.08)…"
+    flatpak --user install -y flathub org.freedesktop.Platform//24.08
+  fi
+}
+
+install_flatpak() {
+  local conductor_home="$1" force="${2:-false}"
+  local bundle="${conductor_home}/python/con-pilot/dist/io.conductor.ConPilot.flatpak"
+
+  if [[ ! -f "$bundle" ]]; then
+    echo "Error: Flatpak bundle not found at ${bundle}" >&2
+    exit 1
+  fi
+
+  ensure_flatpak_runtime
+
+  if flatpak --user info "$APP_ID" &>/dev/null; then
+    if [[ "$force" == true ]]; then
+      echo "Removing existing Flatpak…"
+      flatpak --user uninstall -y "$APP_ID" 2>/dev/null || true
+      rm -rf "$HOME/.var/app/${APP_ID}"
+    else
+      echo "con-pilot Flatpak is already installed. Use 'update' to upgrade."
+      return 0
+    fi
+  fi
+
+  echo "Installing Flatpak from ${bundle}…"
+  flatpak --user install --noninteractive "$bundle"
+
+  local host="${CON_PILOT_HOST:-localhost}"
+  local port="${CON_PILOT_PORT:-8000}"
+  flatpak --user override \
+    --env=CONDUCTOR_HOME="$conductor_home" \
+    --env=CON_PILOT_HOST="$host" \
+    --env=CON_PILOT_PORT="$port" \
+    "$APP_ID"
+  echo "Forwarded env vars into the Flatpak sandbox."
+}
+
+start_and_healthcheck() {
+  local host="${CON_PILOT_HOST:-localhost}"
+  local port="${CON_PILOT_PORT:-8000}"
+
+  flatpak run "$APP_ID" serve &
+  local pid=$!
+  local url="http://${host}:${port}/health"
+  echo "Waiting for ${url}…"
+
+  for i in $(seq 1 15); do
+    if curl -sf "$url" >/dev/null 2>&1; then
+      echo "Health check passed — con-pilot is running (PID ${pid})."
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "Error: con-pilot process exited unexpectedly." >&2
+      exit 1
+    fi
+    sleep 1
+  done
+
+  echo "Error: con-pilot did not become healthy after 15s." >&2
+  kill "$pid" 2>/dev/null || true
+  exit 1
+}
+
+show_key() {
+  local key_file="$1/python/con-pilot/key"
+  if [[ -f "$key_file" ]]; then
+    echo ""
+    echo "ADMIN KEY (save this NOW — it will NOT be shown again): $(cat "$key_file")"
+    echo ""
+    shred -uz "$key_file" 2>/dev/null || rm -f "$key_file"
+    echo "Key file erased. Store the key in a safe place."
+  fi
+}
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+cmd_install() {
+  if [[ -z "${1:-}" ]]; then
+    echo "Error: CONDUCTOR_HOME is required." >&2
+    echo "Usage: ./setup.sh install CONDUCTOR_HOME" >&2
+    exit 1
+  fi
+  local conductor_home="$1"
+  echo "Installing Conductor v${VERSION} to ${conductor_home}…"
+
+  extract_to "$conductor_home"
+  printf '%s\n' "$VERSION" > "${conductor_home}/VERSION"
+  echo "Extracted to ${conductor_home}."
+  grep -q '# Conductor' "$BASHRC" 2>/dev/null || printf '\n# Conductor\n' >> "$BASHRC"
+  persist_var CONDUCTOR_HOME "$conductor_home"
+  persist_var CON_PILOT_HOST "${CON_PILOT_HOST:-localhost}"
+  persist_var CON_PILOT_PORT "${CON_PILOT_PORT:-8000}"
+  echo "Environment variables persisted in ${BASHRC}."
+
+  install_flatpak "$conductor_home" false
+  start_and_healthcheck
+  show_key "$conductor_home"
+
+  echo ""
+  echo "Conductor v${VERSION} installed successfully."
+  echo "Run:  source ${BASHRC}"
+}
+
+cmd_uninstall() {
+  echo "Uninstalling Conductor…"
+
+  # Stop server
+  if pgrep -f 'con-pilot serve' >/dev/null 2>&1; then
+    pkill -f 'con-pilot serve' || true
+    echo "Stopped con-pilot serve process."
+  fi
+
+  # Remove Flatpak
+  if flatpak --user info "$APP_ID" &>/dev/null; then
+    flatpak --user uninstall -y "$APP_ID"
+    echo "Removed Flatpak ${APP_ID}."
+  fi
+
+  # Clean .bashrc
+  if [[ -f "$BASHRC" ]]; then
+    sed -i '/^export CONDUCTOR_HOME=/d' "$BASHRC"
+    sed -i '/^export CON_PILOT_HOST=/d' "$BASHRC"
+    sed -i '/^export CON_PILOT_PORT=/d' "$BASHRC"
+    sed -i '/^# Conductor$/d'          "$BASHRC"
+    echo "Removed env vars from ${BASHRC}."
+  fi
+
+  # Clean venvs and sandbox data
+  local venv_dir="${XDG_DATA_HOME:-$HOME/.local/share}/con-pilot"
+  [[ -d "$venv_dir" ]] && rm -rf "$venv_dir" && echo "Removed ${venv_dir}."
+
+  local flatpak_data="$HOME/.var/app/${APP_ID}"
+  [[ -d "$flatpak_data" ]] && rm -rf "$flatpak_data" && echo "Removed ${flatpak_data}."
+
+  # Remove install directory
+  local conductor_home="${CONDUCTOR_HOME:-$DEFAULT_HOME}"
+  if [[ -d "$conductor_home" ]]; then
+    rm -rf "$conductor_home"
+    echo "Removed ${conductor_home}."
+  fi
+
+  echo ""
+  echo "Conductor uninstalled. Restart your shell or run:  source ${BASHRC}"
+}
+
+cmd_update() {
+  local conductor_home="${CONDUCTOR_HOME:-}"
+  if [[ -z "$conductor_home" ]]; then
+    echo "Error: CONDUCTOR_HOME is not set. Run 'source ~/.bashrc' or install first." >&2
+    exit 1
+  fi
+
+  # Check installed version
+  local installed_version=""
+  if [[ -f "${conductor_home}/VERSION" ]]; then
+    installed_version="$(cat "${conductor_home}/VERSION" | tr -d '[:space:]')"
+  fi
+
+  if [[ "$installed_version" == "$VERSION" ]]; then
+    echo "Conductor is already at v${VERSION}. Nothing to do."
+    exit 0
+  fi
+
+  if [[ -n "$installed_version" ]]; then
+    echo "Updating Conductor from v${installed_version} to v${VERSION}…"
+  else
+    echo "Installing Conductor v${VERSION} (no previous version found)…"
+  fi
+
+  # Stop server before update
+  if pgrep -f 'con-pilot serve' >/dev/null 2>&1; then
+    pkill -f 'con-pilot serve' || true
+    echo "Stopped running con-pilot serve."
+  fi
+
+  extract_to "$conductor_home"
+  printf '%s\n' "$VERSION" > "${conductor_home}/VERSION"
+  echo "Extracted v${VERSION} to ${conductor_home}."
+
+  install_flatpak "$conductor_home" true
+  start_and_healthcheck
+  show_key "$conductor_home"
+
+  echo ""
+  echo "Conductor updated to v${VERSION}."
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 0
+fi
+
+case "$1" in
+  install)   shift; cmd_install "$@" ;;
+  uninstall) cmd_uninstall ;;
+  update)    cmd_update ;;
+  version)   echo "Conductor v${VERSION}  (con-pilot v${CON_PILOT_VERSION})" ;;
+  help|--help|-h) usage ;;
+  *)
+    echo "Unknown command: $1" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
+exit 0
+__ARCHIVE__

@@ -1,0 +1,444 @@
+version: "3"
+
+vars:
+  CON_PILOT_DIR: "{{.ROOT_DIR}}/python/con-pilot"
+  VENV: "{{.CON_PILOT_DIR}}/.venv"
+  CON_PILOT: "{{.VENV}}/bin/con-pilot"
+  PYTHON: "{{.VENV}}/bin/python"
+  APP_ID: io.conductor.ConPilot
+  BUNDLE: "{{.CON_PILOT_DIR}}/dist/io.conductor.ConPilot.flatpak"
+  KEY_FILE: "{{.CON_PILOT_DIR}}/key"
+  BASHRC: "{{.HOME}}/.bashrc"
+  VERSION:
+    sh: cat "{{.ROOT_DIR}}/VERSION" | tr -d '[:space:]'
+  CONDUCTOR_HOME:
+    sh: echo "${CONDUCTOR_HOME:-$HOME/.conductor}"
+  CON_PILOT_HOST:
+    sh: echo "${CON_PILOT_HOST:-localhost}"
+  CON_PILOT_PORT:
+    sh: echo "${CON_PILOT_PORT:-8000}"
+
+env:
+  CONDUCTOR_HOME: "{{.CONDUCTOR_HOME}}"
+
+tasks:
+  # ── Install / Uninstall ─────────────────────────────────────────────────────
+
+  install:
+    desc: "Install the con-pilot Flatpak, configure env, start service. Pass -- --force to reinstall."
+    cmds:
+      - task: _install-env
+      - task: _install-flatpak
+      - task: _install-start
+      - task: _install-show-key
+
+  _install-env:
+    internal: true
+    desc: Persist CONDUCTOR_HOME, CON_PILOT_HOST, CON_PILOT_PORT in .bashrc.
+    cmds:
+      - |
+        persist_var() {
+          local var_name="$1" var_value="$2"
+          if grep -q "^export ${var_name}=" "{{.BASHRC}}" 2>/dev/null; then
+            sed -i "s|^export ${var_name}=.*|export ${var_name}=\"${var_value}\"|" "{{.BASHRC}}"
+          else
+            printf 'export %s="%s"\n' "$var_name" "$var_value" >> "{{.BASHRC}}"
+          fi
+        }
+        grep -q '# Conductor' "{{.BASHRC}}" 2>/dev/null || printf '\n# Conductor\n' >> "{{.BASHRC}}"
+        persist_var CONDUCTOR_HOME  "{{.CONDUCTOR_HOME}}"
+        persist_var CON_PILOT_HOST  "{{.CON_PILOT_HOST}}"
+        persist_var CON_PILOT_PORT  "{{.CON_PILOT_PORT}}"
+        echo "Environment variables persisted in {{.BASHRC}}."
+
+        # Copy config files if CONDUCTOR_HOME differs from source
+        if [[ "{{.ROOT_DIR}}" != "{{.CONDUCTOR_HOME}}" ]]; then
+          mkdir -p "{{.CONDUCTOR_HOME}}"
+          cp "{{.ROOT_DIR}}/conductor.json" "{{.CONDUCTOR_HOME}}/conductor.json"
+          cp "{{.ROOT_DIR}}/README.md"      "{{.CONDUCTOR_HOME}}/README.md"
+          echo "Copied conductor.json and README.md to {{.CONDUCTOR_HOME}}."
+        fi
+
+  _install-flatpak:
+    internal: true
+    desc: Install the Flatpak bundle and forward env vars to sandbox.
+    cmds:
+      - |
+        if [[ ! -f "{{.BUNDLE}}" ]]; then
+          echo "Error: Flatpak bundle not found at {{.BUNDLE}}"
+          echo "Build it first with:  task build-all"
+          exit 1
+        fi
+
+        FORCE=false
+        case "{{.CLI_ARGS}}" in *--force*|*-ff*) FORCE=true ;; esac
+
+        if flatpak --user info "{{.APP_ID}}" &>/dev/null; then
+          if [[ "$FORCE" == true ]]; then
+            echo "Reinstalling con-pilot Flatpak…"
+            flatpak --user uninstall -y "{{.APP_ID}}" 2>/dev/null || true
+            rm -rf "$HOME/.var/app/{{.APP_ID}}"
+            flatpak --user install --noninteractive "{{.BUNDLE}}"
+          else
+            echo "con-pilot Flatpak is already installed. Use -- --force to reinstall."
+          fi
+        else
+          echo "Installing con-pilot Flatpak from {{.BUNDLE}}…"
+          flatpak --user install --noninteractive "{{.BUNDLE}}"
+        fi
+
+        flatpak --user override \
+          --env=CONDUCTOR_HOME="{{.CONDUCTOR_HOME}}" \
+          --env=CON_PILOT_HOST="{{.CON_PILOT_HOST}}" \
+          --env=CON_PILOT_PORT="{{.CON_PILOT_PORT}}" \
+          "{{.APP_ID}}"
+        echo "Forwarded env vars into the Flatpak sandbox."
+
+  _install-start:
+    internal: true
+    desc: Start con-pilot serve and wait for health check.
+    cmds:
+      - |
+        flatpak run "{{.APP_ID}}" serve &
+        SERVER_PID=$!
+        HEALTH_URL="http://{{.CON_PILOT_HOST}}:{{.CON_PILOT_PORT}}/health"
+        echo "Waiting for $HEALTH_URL …"
+        for i in $(seq 1 15); do
+          if curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
+            echo "Health check passed — con-pilot is running (PID $SERVER_PID)."
+            break
+          fi
+          if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "Error: con-pilot process exited unexpectedly."
+            exit 1
+          fi
+          sleep 1
+        done
+        if ! curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
+          echo "Error: con-pilot did not become healthy after 15s."
+          kill "$SERVER_PID" 2>/dev/null || true
+          exit 1
+        fi
+
+  _install-show-key:
+    internal: true
+    desc: Display the admin key once, then shred the plaintext.
+    cmds:
+      - |
+        if [[ -f "{{.KEY_FILE}}" ]]; then
+          echo ""
+          echo "ADMIN KEY (save this NOW — it will NOT be shown again): $(cat '{{.KEY_FILE}}')"
+          echo ""
+          # Securely erase the key file
+          shred -uz "{{.KEY_FILE}}" 2>/dev/null || rm -f "{{.KEY_FILE}}"
+          echo "Key file erased. Store the key in a safe place."
+        else
+          echo "Warning: No admin key file found at {{.KEY_FILE}}."
+        fi
+
+  uninstall:
+    desc: Stop server, remove Flatpak, clean .bashrc, remove sandbox data.
+    cmds:
+      - |
+        echo "Uninstalling con-pilot…"
+
+        # Stop server
+        if pgrep -f 'con-pilot serve' >/dev/null 2>&1; then
+          pkill -f 'con-pilot serve' || true
+          echo "Stopped con-pilot serve process."
+        else
+          echo "No running con-pilot serve process found."
+        fi
+
+        # Remove Flatpak
+        if flatpak --user info "{{.APP_ID}}" &>/dev/null; then
+          flatpak --user uninstall -y "{{.APP_ID}}"
+          echo "Removed Flatpak {{.APP_ID}}."
+        else
+          echo "Flatpak {{.APP_ID}} is not installed — skipping."
+        fi
+
+        # Clean .bashrc
+        if [[ -f "{{.BASHRC}}" ]]; then
+          sed -i '/^export CONDUCTOR_HOME=/d'  "{{.BASHRC}}"
+          sed -i '/^export CON_PILOT_HOST=/d'  "{{.BASHRC}}"
+          sed -i '/^export CON_PILOT_PORT=/d'  "{{.BASHRC}}"
+          sed -i '/^# Conductor$/d'           "{{.BASHRC}}"
+          echo "Removed env vars from {{.BASHRC}}."
+        fi
+
+        # Clean up venvs and sandbox data
+        VENV_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/con-pilot"
+        if [[ -d "$VENV_DIR" ]]; then
+          rm -rf "$VENV_DIR"
+          echo "Removed bootstrap venv at $VENV_DIR."
+        fi
+
+        FLATPAK_DATA="$HOME/.var/app/{{.APP_ID}}"
+        if [[ -d "$FLATPAK_DATA" ]]; then
+          rm -rf "$FLATPAK_DATA"
+          echo "Removed Flatpak sandbox data at $FLATPAK_DATA."
+        fi
+
+        echo ""
+        echo "Done. Restart your shell or run:  source {{.BASHRC}}"
+
+  # ── Run ─────────────────────────────────────────────────────────────────────
+
+  start:
+    desc: Start con-pilot in production mode via con-pilot serve.
+    cmds:
+      - "{{.CON_PILOT}} serve {{.CLI_ARGS}}"
+
+  # ── Deployment ──────────────────────────────────────────────────────────────
+
+  deploy:
+    desc: Install/upgrade con-pilot into the conductor venv, then (re)start the service.
+    dir: "{{.CON_PILOT_DIR}}"
+    cmds:
+      - uv sync --all-groups
+      - task: _restart
+
+  _restart:
+    internal: true
+    desc: Kill any running con-pilot serve process and launch a fresh one.
+    cmds:
+      - |
+        if [ -n "$(pgrep -f 'con-pilot serve')" ]; then
+          echo "Stopping existing con-pilot serve process..."
+          pkill -f 'con-pilot serve' || true
+          sleep 1
+        fi
+      - |
+        LOG="{{.CONDUCTOR_HOME}}/.github/scripts/sync_agents.log"
+        mkdir -p "$(dirname "$LOG")"
+        nohup "{{.CON_PILOT}}" serve \
+          >> "$LOG" 2>&1 &
+        echo "con-pilot started (PID $!), logging to $LOG"
+
+  # ── Lifecycle helpers ────────────────────────────────────────────────────────
+
+  stop:
+    desc: Stop the running con-pilot serve process.
+    cmds:
+      - pkill -f 'con-pilot serve' && echo "Stopped." || echo "Not running."
+
+  status:
+    desc: Show whether con-pilot is running and which port it listens on.
+    cmds:
+      - |
+        PIDS=$(pgrep -f 'con-pilot serve' || true)
+        if [ -n "$PIDS" ]; then
+          echo "con-pilot is running (PID $PIDS)"
+          ss -tlnp 2>/dev/null | grep -E ':(8[0-9]{3})\b' || true
+        else
+          echo "con-pilot is NOT running."
+        fi
+
+  sync:
+    desc: Trigger a one-shot sync cycle against the running service.
+    cmds:
+      - "{{.CON_PILOT}} sync"
+
+  logs:
+    desc: Tail the sync_agents log.
+    cmds:
+      - tail -f "{{.CONDUCTOR_HOME}}/.github/scripts/sync_agents.log"
+
+  # ── Build (development only — stripped from setup.sh) ───────────────────────
+
+  build:
+    desc: "Build Flatpak and package into setup.sh."
+    cmds:
+      - task: flatpak
+      - task: release:package
+
+  # ── Flatpak ─────────────────────────────────────────────────────────────────
+
+  flatpak:deps:
+    desc: >
+      Build the con-pilot wheel and download all dependency wheels into
+      flatpak/deps/ for an offline Flatpak build.
+    dir: "{{.CON_PILOT_DIR}}"
+    cmds:
+      - rm -rf flatpak/deps && mkdir -p flatpak/deps
+      - uv build --wheel --out-dir flatpak/deps .
+      - >-
+        "{{.VENV}}/bin/pip" download
+        -d flatpak/deps
+        --only-binary=:all:
+        fastapi "uvicorn[standard]" croniter
+    sources:
+      - "{{.CON_PILOT_DIR}}/pyproject.toml"
+    generates:
+      - "{{.CON_PILOT_DIR}}/flatpak/deps/*.whl"
+
+  flatpak:build:
+    desc: Build the Flatpak app image using flatpak-builder.
+    dir: "{{.CON_PILOT_DIR}}"
+    deps: [flatpak:deps]
+    cmds:
+      - mkdir -p flatpak/build-dir flatpak/repo
+      - >-
+        flatpak-builder
+        --force-clean
+        --repo=flatpak/repo
+        flatpak/build-dir
+        flatpak/io.conductor.ConPilot.yml
+    sources:
+      - "{{.CON_PILOT_DIR}}/flatpak/io.conductor.ConPilot.yml"
+      - "{{.CON_PILOT_DIR}}/flatpak/con-pilot-launcher.sh"
+      - "{{.CON_PILOT_DIR}}/flatpak/deps/*.whl"
+      - "{{.CON_PILOT_DIR}}/src/**/*.py"
+      - "{{.CON_PILOT_DIR}}/pyproject.toml"
+
+  flatpak:bundle:
+    desc: Generate a fresh admin key and export a self-contained .flatpak bundle to dist/.
+    dir: "{{.CON_PILOT_DIR}}"
+    deps: [flatpak:build]
+    cmds:
+      - "{{.PYTHON}} -c \"import uuid; open('key', 'w').write(str(uuid.uuid4()))\""
+      - echo "Generated new admin key at $(pwd)/key"
+      - mkdir -p dist
+      - flatpak build-bundle flatpak/repo dist/io.conductor.ConPilot.flatpak io.conductor.ConPilot
+      - echo "Bundle written to dist/io.conductor.ConPilot.flatpak"
+
+  flatpak:run:
+    desc: Run the installed Flatpak (pass extra args via CLI_ARGS).
+    cmds:
+      - flatpak run --env=CONDUCTOR_HOME={{.CONDUCTOR_HOME}} io.conductor.ConPilot {{.CLI_ARGS}}
+
+  flatpak:clean:
+    desc: Remove Flatpak build artefacts (keeps downloaded deps cache).
+    dir: "{{.CON_PILOT_DIR}}"
+    cmds:
+      - rm -rf flatpak/build-dir flatpak/repo dist/io.conductor.ConPilot.flatpak
+
+  flatpak:clean:all:
+    desc: Remove all Flatpak artefacts including the deps wheel cache.
+    dir: "{{.CON_PILOT_DIR}}"
+    cmds:
+      - rm -rf flatpak/build-dir flatpak/repo flatpak/deps dist/io.conductor.ConPilot.flatpak
+
+  flatpak:
+    desc: "Full Flatpak pipeline: deps → build → bundle."
+    cmds:
+      - task: flatpak:deps
+      - task: flatpak:build
+      - task: flatpak:bundle
+
+  flatpak:force:
+    desc: "Clean all artefacts and rebuild from scratch: clean → deps → build → bundle."
+    cmds:
+      - task: flatpak:clean:all
+      - task: flatpak:deps
+      - task: flatpak:build
+      - task: flatpak:bundle
+
+  build-all:
+    desc: "Build everything. Pass -- --force to rebuild, -- --release to bump version and package setup.sh."
+    cmds:
+      - |
+        FORCE=false
+        RELEASE=false
+        case "{{.CLI_ARGS}}" in
+          *--force*|*-f*) FORCE=true ;;
+        esac
+        case "{{.CLI_ARGS}}" in
+          *--release*) RELEASE=true ;;
+        esac
+
+        if [[ "$FORCE" == true ]]; then
+          task flatpak:force
+        else
+          task flatpak
+        fi
+
+        if [[ "$RELEASE" == true ]]; then
+          task release:bump
+          task release:package
+        fi
+
+  # ── Release ─────────────────────────────────────────────────────────────────
+
+  release:bump:
+    desc: Bump the patch version in VERSION.
+    cmds:
+      - |
+        V="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
+        MAJOR="${V%%.*}"
+        REST="${V#*.}"
+        MINOR="${REST%%.*}"
+        PATCH="${REST#*.}"
+        NEW_PATCH=$((PATCH + 1))
+        NEW_V="${MAJOR}.${MINOR}.${NEW_PATCH}"
+        printf '%s\n' "$NEW_V" > "{{.ROOT_DIR}}/VERSION"
+        echo "Version bumped: ${V} → ${NEW_V}"
+
+  release:package:
+    desc: Package the conductor directory into a self-extracting setup.sh.
+    cmds:
+      - |
+        set -e
+        VERSION="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
+        BUILD_DATE="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+        DIST_DIR="{{.ROOT_DIR}}/dist"
+        mkdir -p "$DIST_DIR"
+
+        echo "Packaging Conductor v${VERSION}…"
+
+        # Strip build/release tasks from Taskfile for the deployment archive
+        ORIG_TASKFILE="{{.ROOT_DIR}}/Taskfile.yml"
+        BACKUP_TASKFILE="$(mktemp)"
+        cp "$ORIG_TASKFILE" "$BACKUP_TASKFILE"
+        sed -i '/^  # ── Build (development only/,$d' "$ORIG_TASKFILE"
+        restore_taskfile() { cp "$BACKUP_TASKFILE" "$ORIG_TASKFILE"; rm -f "$BACKUP_TASKFILE"; }
+        trap restore_taskfile EXIT
+
+        # Create payload tarball (exclude dev/build artefacts)
+        PAYLOAD="$(mktemp)"
+        tar czf "$PAYLOAD" \
+          -C "$(dirname '{{.ROOT_DIR}}')" \
+          --transform='s|^conductor|conductor|' \
+          --exclude='conductor/.copilot' \
+          --exclude='conductor/.git' \
+          --exclude='conductor/.github/agents' \
+          --exclude='conductor/.task' \
+          --exclude='conductor/dist' \
+          --exclude='conductor/setup.sh.header' \
+          --exclude='conductor/VERSION' \
+          --exclude='conductor/python/con-pilot/.venv' \
+          --exclude='conductor/python/con-pilot/.task' \
+          --exclude='conductor/python/con-pilot/.flatpak-builder' \
+          --exclude='conductor/python/con-pilot/flatpak/build-dir' \
+          --exclude='conductor/python/con-pilot/flatpak/repo' \
+          --exclude='conductor/python/con-pilot/flatpak/deps' \
+          --exclude='conductor/python/con-pilot/.ruff_cache' \
+          --exclude='conductor/python/con-pilot/.pytest_cache' \
+          --exclude='conductor/python/con-pilot/tests' \
+          --exclude='__pycache__' \
+          conductor
+
+        # Restore original Taskfile immediately after tar
+        restore_taskfile
+        trap - EXIT
+
+        # Build setup.sh = header (with substitutions) + archive payload
+        SETUP="${DIST_DIR}/setup-${VERSION}.sh"
+        CP_VERSION=$(grep -m1 '^version' '{{.CON_PILOT_DIR}}/pyproject.toml' | sed 's/.*"\(.*\)"/\1/')
+        sed \
+          -e "s|__VERSION__|${VERSION}|g" \
+          -e "s|__CON_PILOT_VERSION__|${CP_VERSION}|g" \
+          -e "s|__BUILD_DATE__|${BUILD_DATE}|g" \
+          "{{.ROOT_DIR}}/setup.sh.header" > "$SETUP"
+        cat "$PAYLOAD" >> "$SETUP"
+        chmod +x "$SETUP"
+        rm -f "$PAYLOAD"
+
+        # Convenience symlink
+        ln -sf "setup-${VERSION}.sh" "${DIST_DIR}/setup.sh"
+
+        SIZE="$(du -h "$SETUP" | cut -f1)"
+        echo "Created ${SETUP} (${SIZE})"
+        echo "Symlink: ${DIST_DIR}/setup.sh → setup-${VERSION}.sh"
+

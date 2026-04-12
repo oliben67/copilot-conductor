@@ -1,0 +1,9 @@
+[[job]]
+name = "stale-pr-review"
+schedule = "0 9 * * *"
+task = "Scan open pull requests that have been waiting for review for more than 24 hours. Flag them and add a summary comment listing the PRs with their age and last activity."
+
+[[job]]
+name = "weekly-review-summary"
+schedule = "0 9 * * 1"
+task = "Generate a weekly code review summary: number of PRs reviewed, common issues found, coding standards violations, and overall code quality trend. Append to .github/output/reviews/."

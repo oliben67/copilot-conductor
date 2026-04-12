@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# Build / release artefacts
+dist/
+wheels/
+.task/
+.flatpak-builder/
+
+# Flatpak repo (built by flatpak-builder)
+python/con-pilot/flatpak/repo/
+python/con-pilot/flatpak/build-dir/
+python/con-pilot/flatpak/deps/
+
+# Secrets
+key
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+
+# Runtime state
+.github/agents/cron/.state/
+.github/agents/cron/pending.log
+
+# Copilot session logs
+.copilot/

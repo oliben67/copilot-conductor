@@ -1,0 +1,9 @@
+[[job]]
+name = "log-cleanup"
+schedule = "0 2 * * *"
+task = "Clean up log files older than 30 days in .github/scripts/*.log and .github/agents/cron/pending.log. Archive important entries before deletion."
+
+[[job]]
+name = "workspace-health"
+schedule = "0 8 * * *"
+task = "Check that trusted directories defined in conductor.json under trust.trusted_directories are accessible and within expected size bounds. Log warnings for any issues."

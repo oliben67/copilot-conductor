@@ -1,0 +1,44 @@
+app-id: io.conductor.ConPilot
+
+# Uses uv to install Python 3.14 + con-pilot on first run — no compilation.
+# Install runtimes with:
+#   flatpak install flathub org.freedesktop.Platform//24.08 \
+#                           org.freedesktop.Sdk//24.08
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+
+# Wrapper script that bootstraps via uv on first run.
+command: /app/bin/con-pilot-launcher
+
+finish-args:
+  # con-pilot serve exposes a FastAPI endpoint on localhost.
+  - --share=network
+  # Needs read/write access to $CONDUCTOR_HOME (defaults to ~/.conductor).
+  - --filesystem=home
+
+modules:
+  - name: uv
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 uv /app/bin/uv
+    sources:
+      - type: archive
+        url: https://github.com/astral-sh/uv/releases/download/0.10.12/uv-x86_64-unknown-linux-gnu.tar.gz
+        sha256: ec72570c9d1f33021aa80b176d7baba390de2cfeb1abcbefca346d563bf17484
+
+  - name: con-pilot
+    buildsystem: simple
+    build-commands:
+      # Stage pre-downloaded wheels so the launcher can install them offline.
+      - mkdir -p /app/share/con-pilot/wheels
+      - cp *.whl /app/share/con-pilot/wheels/
+      # Install the launcher wrapper script.
+      - install -Dm755 con-pilot-launcher.sh /app/bin/con-pilot-launcher
+    sources:
+      # Wheels downloaded by `task flatpak:deps` — all merged into build root.
+      - type: dir
+        path: deps
+      # Wrapper script sitting next to this manifest.
+      - type: file
+        path: con-pilot-launcher.sh

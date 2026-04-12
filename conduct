@@ -1,0 +1,268 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONDUCTOR_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]')"
+CON_PILOT_VERSION="$(grep -m1 '^version' "$SCRIPT_DIR/python/con-pilot/pyproject.toml" 2>/dev/null | sed 's/.*"\(.*\)"/\1/' || echo 'unknown')"
+CON_PILOT_HOST="${CON_PILOT_HOST:-localhost}"
+CON_PILOT_PORT="${CON_PILOT_PORT:-8000}"
+BASE_URL="http://${CON_PILOT_HOST}:${CON_PILOT_PORT}"
+
+# ── Bootstrap: ensure task (go-task) is installed ─────────────────────────────
+
+ensure_task() {
+  if command -v task &>/dev/null; then
+    return
+  fi
+
+  echo "task (go-task) not found. Installing…"
+
+  if command -v brew &>/dev/null; then
+    brew install go-task
+  elif command -v snap &>/dev/null; then
+    sudo snap install task --classic
+  elif command -v apt-get &>/dev/null; then
+    sudo sh -c 'curl -fsSL https://taskfile.dev/install.sh | sh -s -- -d -b /usr/local/bin'
+  elif command -v dnf &>/dev/null; then
+    sudo sh -c 'curl -fsSL https://taskfile.dev/install.sh | sh -s -- -d -b /usr/local/bin'
+  elif command -v pacman &>/dev/null; then
+    sudo pacman -S --noconfirm go-task-bin 2>/dev/null || \
+      sudo sh -c 'curl -fsSL https://taskfile.dev/install.sh | sh -s -- -d -b /usr/local/bin'
+  else
+    echo "Could not auto-install task. Install manually: https://taskfile.dev/installation/" >&2
+    exit 1
+  fi
+
+  if ! command -v task &>/dev/null; then
+    echo "Error: task installation failed." >&2
+    exit 1
+  fi
+  echo "task installed successfully."
+}
+
+# ── Usage ─────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+conduct — Conductor v${CONDUCTOR_VERSION}  (con-pilot v${CON_PILOT_VERSION})
+
+Usage:
+  conduct <command> [options]
+
+Service commands:
+  start                      Start the con-pilot service
+  stop                       Stop the con-pilot service
+  status                     Show whether con-pilot is running
+  deploy                     Install/upgrade con-pilot and restart
+  sync                       Trigger a one-shot sync cycle
+  logs                       Tail the sync_agents log
+
+Build commands:
+  build [--force|-f]         Build all Flatpak artefacts (--force = clean rebuild)
+
+Project commands:
+  register <name> <dir>      Register a new project
+  retire <name>              Retire a project
+
+Admin commands (require --key):
+  admin replace <file> <role> [project] --key KEY   Replace agent body with file
+  admin reset   <role> [project]        --key KEY   Reset agent(s) to defaults
+
+General:
+  help                       Show this help message
+EOF
+}
+
+usage_admin() {
+  cat <<EOF
+conduct admin — Admin commands (require --key)
+
+Usage:
+  conduct admin <command> [args] --key <KEY>
+
+Commands:
+  replace <file> <role> [project]   Replace agent body with instructions file
+  reset   <role> [project]          Reset agent(s) to template / default
+
+Options:
+  --key KEY   Admin key (required for all admin commands)
+
+Examples:
+  conduct admin replace body.md reviewer --key abc-123
+  conduct admin reset developer my-app --key abc-123
+EOF
+}
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+require_key() {
+  if [[ -z "${ADMIN_KEY:-}" ]]; then
+    echo "Error: --key is required for admin commands." >&2
+    echo "Usage: conduct admin <command> [args] --key <KEY>" >&2
+    exit 1
+  fi
+}
+
+api_post() {
+  local endpoint="$1" body="$2"
+  curl -sf -X POST "${BASE_URL}${endpoint}" \
+    -H "Content-Type: application/json" \
+    -d "$body"
+}
+
+# ── Service commands ──────────────────────────────────────────────────────────
+
+cmd_start() {
+  task -d "$SCRIPT_DIR" start
+}
+
+cmd_stop() {
+  task -d "$SCRIPT_DIR" stop
+}
+
+cmd_status() {
+  task -d "$SCRIPT_DIR" status
+}
+
+cmd_deploy() {
+  task -d "$SCRIPT_DIR" deploy
+}
+
+cmd_sync() {
+  task -d "$SCRIPT_DIR" sync
+}
+
+cmd_logs() {
+  task -d "$SCRIPT_DIR" logs
+}
+
+cmd_build() {
+  local args=()
+  for arg in "$@"; do
+    case "$arg" in
+      --force|-f) args+=("--force") ;;
+      *) args+=("$arg") ;;
+    esac
+  done
+
+  if [[ ${#args[@]} -gt 0 ]]; then
+    task -d "$SCRIPT_DIR" build-all -- "${args[@]}"
+  else
+    task -d "$SCRIPT_DIR" build-all
+  fi
+}
+
+# ── Project commands ──────────────────────────────────────────────────────────
+
+cmd_register() {
+  if [[ $# -lt 2 ]]; then
+    echo "Usage: conduct register <name> <directory>" >&2
+    exit 1
+  fi
+  api_post "/register" "{\"name\": \"$1\", \"directory\": \"$2\"}"
+}
+
+cmd_retire() {
+  if [[ $# -lt 1 ]]; then
+    echo "Usage: conduct retire <name>" >&2
+    exit 1
+  fi
+  api_post "/retire-project" "{\"name\": \"$1\"}"
+}
+
+# ── Admin commands ────────────────────────────────────────────────────────────
+
+cmd_admin() {
+  if [[ $# -eq 0 ]]; then
+    usage_admin
+    exit 0
+  fi
+
+  local subcmd="$1"; shift
+
+  # Parse --key from remaining args
+  ADMIN_KEY=""
+  local positional=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --key)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --key requires a value." >&2
+          exit 1
+        fi
+        ADMIN_KEY="$2"; shift 2 ;;
+      --key=*)
+        ADMIN_KEY="${1#--key=}"; shift ;;
+      help|--help|-h)
+        usage_admin; exit 0 ;;
+      *)
+        positional+=("$1"); shift ;;
+    esac
+  done
+
+  require_key
+
+  case "$subcmd" in
+    replace)
+      if [[ ${#positional[@]} -lt 2 ]]; then
+        echo "Usage: conduct admin replace <file> <role> [project] --key KEY" >&2
+        exit 1
+      fi
+      local file="${positional[0]}" role="${positional[1]}" project="${positional[2]:-}"
+      local body="{\"file\": \"$file\", \"role\": \"$role\", \"key\": \"$ADMIN_KEY\""
+      [[ -n "$project" ]] && body+=", \"project\": \"$project\""
+      body+="}"
+      api_post "/replace" "$body"
+      ;;
+    reset)
+      if [[ ${#positional[@]} -lt 1 ]]; then
+        echo "Usage: conduct admin reset <role> [project] --key KEY" >&2
+        exit 1
+      fi
+      local role="${positional[0]}" project="${positional[1]:-}"
+      local body="{\"role\": \"$role\", \"key\": \"$ADMIN_KEY\""
+      [[ -n "$project" ]] && body+=", \"project\": \"$project\""
+      body+="}"
+      api_post "/reset" "$body"
+      ;;
+    help|--help|-h)
+      usage_admin ;;
+    *)
+      echo "Unknown admin command: $subcmd" >&2
+      usage_admin >&2
+      exit 1
+      ;;
+  esac
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 0
+fi
+
+# Commands that delegate to task need it installed
+case "$1" in
+  start|stop|status|deploy|sync|logs|build)
+    ensure_task ;;
+esac
+
+case "$1" in
+  start)     cmd_start ;;
+  stop)      cmd_stop ;;
+  status)    cmd_status ;;
+  deploy)    cmd_deploy ;;
+  sync)      cmd_sync ;;
+  logs)      cmd_logs ;;
+  build)     shift; cmd_build "$@" ;;
+  register)  shift; cmd_register "$@" ;;
+  retire)    shift; cmd_retire "$@" ;;
+  admin)     shift; cmd_admin "$@" ;;
+  help|--help|-h) usage ;;
+  *)
+    echo "Unknown command: $1" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
