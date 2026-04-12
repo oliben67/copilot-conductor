@@ -57,9 +57,6 @@ Service commands:
   sync                       Trigger a one-shot sync cycle
   logs                       Tail the sync_agents log
 
-Build commands:
-  build [--force|-f]         Build all Flatpak artefacts (--force = clean rebuild)
-
 Project commands:
   register <name> <dir>      Register a new project
   retire <name>              Retire a project
@@ -134,22 +131,6 @@ cmd_sync() {
 
 cmd_logs() {
   task -d "$SCRIPT_DIR" logs
-}
-
-cmd_build() {
-  local args=()
-  for arg in "$@"; do
-    case "$arg" in
-      --force|-f) args+=("--force") ;;
-      *) args+=("$arg") ;;
-    esac
-  done
-
-  if [[ ${#args[@]} -gt 0 ]]; then
-    task -d "$SCRIPT_DIR" build-all -- "${args[@]}"
-  else
-    task -d "$SCRIPT_DIR" build-all
-  fi
 }
 
 # ── Project commands ──────────────────────────────────────────────────────────
@@ -244,7 +225,7 @@ fi
 
 # Commands that delegate to task need it installed
 case "$1" in
-  start|stop|status|deploy|sync|logs|build)
+  start|stop|status|deploy|sync|logs)
     ensure_task ;;
 esac
 
@@ -255,7 +236,6 @@ case "$1" in
   deploy)    cmd_deploy ;;
   sync)      cmd_sync ;;
   logs)      cmd_logs ;;
-  build)     shift; cmd_build "$@" ;;
   register)  shift; cmd_register "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
   admin)     shift; cmd_admin "$@" ;;
