@@ -392,8 +392,20 @@ tasks:
         BACKUP_TASKFILE="$(mktemp)"
         cp "$ORIG_TASKFILE" "$BACKUP_TASKFILE"
         sed -i '/^  # ── Build (development only/,$d' "$ORIG_TASKFILE"
-        restore_taskfile() { cp "$BACKUP_TASKFILE" "$ORIG_TASKFILE"; rm -f "$BACKUP_TASKFILE"; }
-        trap restore_taskfile EXIT
+
+        # Strip "Running the tests" section from README for deployment
+        ORIG_README="{{.ROOT_DIR}}/README.md"
+        BACKUP_README="$(mktemp)"
+        cp "$ORIG_README" "$BACKUP_README"
+        sed -i '/^## Running the tests/,$d' "$ORIG_README"
+        # Remove trailing separator left behind
+        sed -i '${/^---$/d;}' "$ORIG_README"
+
+        restore_files() {
+          cp "$BACKUP_TASKFILE" "$ORIG_TASKFILE"; rm -f "$BACKUP_TASKFILE"
+          cp "$BACKUP_README" "$ORIG_README"; rm -f "$BACKUP_README"
+        }
+        trap restore_files EXIT
 
         # Create payload tarball (exclude dev/build artefacts)
         PAYLOAD="$(mktemp)"
@@ -402,6 +414,7 @@ tasks:
           --transform='s|^conductor|conductor|' \
           --exclude='conductor/.copilot' \
           --exclude='conductor/.git' \
+          --exclude='conductor/.gitignore' \
           --exclude='conductor/.github/agents' \
           --exclude='conductor/.task' \
           --exclude='conductor/dist' \
@@ -419,8 +432,8 @@ tasks:
           --exclude='__pycache__' \
           conductor
 
-        # Restore original Taskfile immediately after tar
-        restore_taskfile
+        # Restore originals immediately after tar
+        restore_files
         trap - EXIT
 
         # Build setup.sh = header (with substitutions) + archive payload

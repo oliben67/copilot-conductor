@@ -231,6 +231,10 @@ cmd_update() {
     echo "Stopped running con-pilot serve."
   fi
 
+  # Remove files excluded from the deployment archive (stale from older versions)
+  rm -f "${conductor_home}/.gitignore"
+  rm -f "${conductor_home}/setup.sh.header"
+
   extract_to "$conductor_home"
   printf '%s\n' "$VERSION" > "${conductor_home}/VERSION"
   echo "Extracted v${VERSION} to ${conductor_home}."
