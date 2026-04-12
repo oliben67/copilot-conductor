@@ -1,15 +1,21 @@
-# con-pilot
+# Conductor
 
-> **The synchronisation engine for the Conductor AI agent system.**
+> **A multi-agent orchestration framework for VS Code Copilot.**
 
-`con-pilot` keeps your VS Code Copilot agent roster in sync with a single source of truth (`conductor.json`), dispatches scheduled tasks, and exposes every lifecycle operation as a simple CLI command.
+Conductor manages a fleet of AI agents defined in a single `conductor.json` file. It automatically creates, retires, and restores `.agent.md` files, dispatches scheduled cron tasks, and exposes every lifecycle operation through both a CLI (`conduct`) and an HTTP API (`con-pilot`).
 
 ---
 
 ## Table of Contents
 
-- [con-pilot](#con-pilot)
+- [Conductor](#conductor)
   - [Table of Contents](#table-of-contents)
+  - [Features](#features)
+  - [Quick start](#quick-start)
+  - [Architecture](#architecture)
+  - [Installation](#installation)
+  - [The `conduct` CLI](#the-conduct-cli)
+  - [The `setup.sh` installer](#the-setupsh-installer)
   - [Overview](#overview)
   - [How it works](#how-it-works)
   - [Directory layout](#directory-layout)
@@ -31,6 +37,156 @@
   - [Templates](#templates)
   - [Environment variables](#environment-variables)
   - [Running the tests](#running-the-tests)
+
+---
+
+## Features
+
+- **Single source of truth** — all agents defined in one `conductor.json`
+- **Automatic sync** — creates, retires, and restores `.agent.md` files every 15 minutes
+- **Flatpak packaging** — con-pilot runs in a sandboxed Flatpak with Python 3.14 and uv-based bootstrap
+- **Self-extracting installer** — `setup.sh` bundles everything into a single ~23 MB file
+- **Install / Update / Uninstall** — full lifecycle via `setup.sh install`, `setup.sh update`, `setup.sh uninstall`
+- **Admin key security** — system agents protected by a UUID key; conductor agent permanently locked
+- **Cron scheduling** — TOML-based per-agent cron jobs dispatched automatically
+- **Project isolation** — trust boundaries enforced via `trust.json`; agents scoped per-project
+- **HTTP API** — FastAPI service with `/health`, `/sync`, `/cron`, `/setup-env`, `/register`, `/retire-project`, `/replace`, `/reset` endpoints
+- **`conduct` CLI** — user-facing operational CLI wrapping Taskfile and the HTTP API
+- **89 tests** — 56 unit + 33 CLI integration tests, all isolated with `tmp_path` fixtures
+
+---
+
+## Quick start
+
+```bash
+# 1. Install from the self-extracting setup.sh
+./setup-0.1.1.sh install ~/.conductor
+
+# 2. Source the environment
+source ~/.bashrc
+
+# 3. Register a project
+conduct register my-app /home/user/projects/my-app
+
+# 4. Check status
+conduct status
+```
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph INSTALL["Deployment"]
+        SH["setup.sh\nself-extracting installer"]
+        FP["Flatpak bundle\nio.conductor.ConPilot"]
+        SH -->|extracts| HOME["~/.conductor/"]
+        SH -->|installs| FP
+    end
+
+    subgraph RUNTIME["Runtime"]
+        CONDUCT["conduct CLI\n(bash)"]
+        API["con-pilot serve\n(FastAPI)"]
+        CONDUCT -->|"HTTP API"| API
+        CONDUCT -->|"task"| TF["Taskfile.yml"]
+    end
+
+    subgraph AGENTS["Agent Files"]
+        SYS[".github/agents/\nsystem agents"]
+        PROJ[".github/projects/\nproject agents"]
+    end
+
+    HOME --> RUNTIME
+    FP -->|"flatpak run"| API
+    API -->|"sync every 15m"| AGENTS
+    API -->|"reads"| CJ["conductor.json"]
+```
+
+---
+
+## Installation
+
+### From setup.sh (recommended)
+
+The self-extracting installer bundles the Flatpak, Taskfile, agent templates, and all configuration:
+
+```bash
+# Install
+./setup-0.1.1.sh install ~/.conductor
+
+# Update (reads CONDUCTOR_HOME from env)
+./setup-0.1.1.sh update
+
+# Uninstall
+./setup-0.1.1.sh uninstall
+```
+
+On install, the admin key is displayed once and then erased. Save it — it's required for modifying system agents.
+
+### From source (development)
+
+```bash
+# Build the Flatpak + setup.sh
+CONDUCTOR_HOME=$(pwd) task build
+
+# The installer is at dist/setup-{version}.sh
+```
+
+---
+
+## The `conduct` CLI
+
+`conduct` is the user-facing operational CLI. It wraps Taskfile tasks and the con-pilot HTTP API.
+
+```
+conduct — Conductor v0.1.1  (con-pilot v0.1.0)
+
+Usage:
+  conduct <command> [options]
+
+Service commands:
+  start                Start the con-pilot service
+  stop                 Stop the con-pilot service
+  status               Show whether con-pilot is running
+  deploy               Install/upgrade con-pilot and restart
+  sync                 Trigger a one-shot sync cycle
+  logs                 Tail the sync_agents log
+
+Build commands:
+  build [--force]      Build all Flatpak artefacts (--force = clean rebuild)
+
+Project commands:
+  register <name> <dir>   Register a new project
+  retire <name>           Retire a project
+
+Admin commands (require --key):
+  admin replace <file> <role> [project] --key KEY
+  admin reset   <role> [project]        --key KEY
+```
+
+---
+
+## The `setup.sh` installer
+
+The build process (`task build`) produces a self-extracting shell script that contains:
+
+1. A bash header with `install`, `update`, `uninstall`, `version`, and `help` commands
+2. A compressed tar archive (appended after `__ARCHIVE__` marker)
+
+The archive includes the Taskfile (stripped of build tasks), Flatpak bundle, agent templates, conductor.json, cron files, and the `conduct` CLI. Dev-only files (tests, .venv, .flatpak-builder) are excluded.
+
+```mermaid
+flowchart LR
+    BUILD["task build"]
+    BUILD --> FP["flatpak:bundle\n(con-pilot.flatpak)"]
+    BUILD --> PKG["release:package"]
+    PKG --> STRIP["strip Taskfile\n(remove build tasks)"]
+    PKG --> TAR["tar.gz payload"]
+    PKG --> HEADER["setup.sh.header\n+ substitutions"]
+    HEADER --> SETUP["setup-{version}.sh\n~23 MB"]
+    TAR --> SETUP
+```
 
 ---
 
@@ -98,7 +254,8 @@ graph TD
 
     HOME --> CJ["conductor.json\nagent definitions & models"]
     HOME --> KEY["key\nsystem GUID (auto-generated)"]
-    HOME --> ENV[".env\nhost/port config (TOML)"]
+    HOME --> VER["VERSION\ninstalled version"]
+    HOME --> CONDUCT["conduct\noperational CLI"]
     HOME --> GH[".github/"]
 
     GH --> TJ["trust.json\nregistered projects"]
@@ -640,7 +797,7 @@ python3 -m pytest tests/ -v
 python3 -m pytest tests/ -v --cov=con_pilot --cov-report=term-missing
 ```
 
-The test suite uses isolated `tmp_path` fixtures — no real `$CONDUCTOR_HOME` files are touched. 56 tests cover every command and edge case.
+The test suite uses isolated `tmp_path` fixtures — no real `$CONDUCTOR_HOME` files are touched. 89 tests (56 unit + 33 integration) cover every command and edge case.
 
 ```
 tests/test_con_pilot.py::TestExpandName            5 tests  — name template substitution
@@ -654,4 +811,6 @@ tests/test_con_pilot.py::TestAmendAgent            6 tests  — amend command + 
 tests/test_con_pilot.py::TestReplaceAgent          3 tests  — replace command + security
 tests/test_con_pilot.py::TestResetAgent            5 tests  — reset command + security
 tests/test_con_pilot.py::TestCli                  11 tests  — CLI dispatch for all commands
+
+tests/test_cli_integration.py                      33 tests — end-to-end CLI via subprocess
 ```

@@ -1,14 +1,26 @@
 # con-pilot
 
-> The synchronisation engine and CLI for the [Conductor](../../README.md) AI agent system.
+> The synchronisation engine, CLI, and HTTP API for the [Conductor](../../README.md) AI agent system.
 
-`con-pilot` is a Python package that keeps your VS Code Copilot agent roster in sync with `conductor.json`, dispatches scheduled cron tasks, and exposes every lifecycle operation as a simple CLI command.
+`con-pilot` is a Python 3.14 package that keeps your VS Code Copilot agent roster in sync with `conductor.json`, dispatches scheduled cron tasks, and exposes every lifecycle operation as both a CLI and a FastAPI service.
+
+**Deployed as a Flatpak** (`io.conductor.ConPilot`) with uv-based bootstrap — the first run installs a sandboxed Python environment and all dependencies in under 100 ms.
 
 ---
 
 ## Installation
 
-The package lives at `$CONDUCTOR_HOME/python/con-pilot/` and is installed into a local venv.
+### Via setup.sh (recommended)
+
+`con-pilot` is installed automatically by the Conductor `setup.sh` installer:
+
+```bash
+./setup-0.1.1.sh install ~/.conductor
+```
+
+This installs the Flatpak bundle, which bootstraps Python 3.14 + all dependencies on first run.
+
+### From source (development)
 
 ```bash
 cd $CONDUCTOR_HOME/python/con-pilot
@@ -119,8 +131,13 @@ flowchart TD
     SV(["con-pilot serve"])
     SV -->|"every 900 s"| S["sync()"]
     SV --> H["GET /health"]
+    SV --> SE["GET /setup-env"]
     SV --> MS["POST /sync"]
     SV --> MC["POST /cron"]
+    SV --> REG["POST /register"]
+    SV --> RET["POST /retire-project"]
+    SV --> REP["POST /replace"]
+    SV --> RST["POST /reset"]
     MS -->|manual trigger| S
     MC -->|manual trigger| C["cron()"]
 ```
@@ -128,8 +145,13 @@ flowchart TD
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | `{"status": "ok"}` |
-| `/sync` | POST | Trigger a manual sync |
+| `/setup-env` | GET | Resolve project context and return session env vars |
+| `/sync` | POST | Trigger a manual sync cycle |
 | `/cron` | POST | Trigger a manual cron dispatch |
+| `/register` | POST | Register a new project (`name`, `directory`) |
+| `/retire-project` | POST | Retire a project (`name`) |
+| `/replace` | POST | Replace agent body (`file_content`, `role`, `project`, `key`) |
+| `/reset` | POST | Reset agent to defaults (`role`, `project`, `key`) |
 
 ---
 
@@ -274,11 +296,32 @@ The system key is a UUID auto-generated on first use and stored at `$CONDUCTOR_H
 ## Development
 
 ```bash
-# Run the test suite (56 tests, isolated tmp_path fixtures)
+# Run the full test suite (89 tests: 56 unit + 33 CLI integration)
 python3 -m pytest tests/ -v
+
+# With coverage
+python3 -m pytest tests/ -v --cov=con_pilot --cov-report=term-missing
 
 # Lint + format
 ruff check src/ && ruff format src/
+
+# Build the Flatpak (from the repo root)
+CONDUCTOR_HOME=$(pwd) task build
+```
+
+### Flatpak build
+
+The Flatpak bundles con-pilot with a uv-based launcher. On first run it creates a sandboxed venv and installs all wheels from the bundle:
+
+```mermaid
+flowchart LR
+    FB["flatpak-builder"]
+    FB --> SDK["org.freedesktop.Platform 24.08"]
+    FB --> UV["uv (standalone binary)"]
+    FB --> WHL["pre-built wheels"]
+    FB --> LAUNCH["con-pilot-launcher.sh"]
+    LAUNCH -->|"first run"| BOOT["uv venv + uv pip install"]
+    LAUNCH -->|"subsequent"| RUN["uv run con-pilot"]
 ```
 
 For full architecture documentation, see the [Conductor README](../../README.md).
