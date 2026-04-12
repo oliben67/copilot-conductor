@@ -53,7 +53,6 @@ Service commands:
   start                      Start the con-pilot service
   stop                       Stop the con-pilot service
   status                     Show whether con-pilot is running
-  deploy                     Install/upgrade con-pilot and restart
   sync                       Trigger a one-shot sync cycle
   logs                       Tail the sync_agents log
 
@@ -119,10 +118,6 @@ cmd_stop() {
 
 cmd_status() {
   task -d "$SCRIPT_DIR" status
-}
-
-cmd_deploy() {
-  task -d "$SCRIPT_DIR" deploy
 }
 
 cmd_sync() {
@@ -225,7 +220,7 @@ fi
 
 # Commands that delegate to task need it installed
 case "$1" in
-  start|stop|status|deploy|sync|logs)
+  start|stop|status|sync|logs)
     ensure_task ;;
 esac
 
@@ -233,7 +228,6 @@ case "$1" in
   start)     cmd_start ;;
   stop)      cmd_stop ;;
   status)    cmd_status ;;
-  deploy)    cmd_deploy ;;
   sync)      cmd_sync ;;
   logs)      cmd_logs ;;
   register)  shift; cmd_register "$@" ;;
