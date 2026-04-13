@@ -411,6 +411,8 @@ tasks:
         ORIG_TASKFILE="{{.ROOT_DIR}}/Taskfile.yml"
         BACKUP_TASKFILE="$(mktemp)"
         cp "$ORIG_TASKFILE" "$BACKUP_TASKFILE"
+        sed -i '/^  # ── Install \/ Uninstall/,/^  # ── Run/{/^  # ── Run/!d}' "$ORIG_TASKFILE"
+        sed -i '/^  # ── Deployment/,/^  # ── Lifecycle/{/^  # ── Lifecycle/!d}' "$ORIG_TASKFILE"
         sed -i '/^  # ── Build (development only/,$d' "$ORIG_TASKFILE"
 
         # Strip "Running the tests" section from README for deployment

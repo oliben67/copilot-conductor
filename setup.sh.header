@@ -2,7 +2,7 @@
 # ── Conductor Self-Extracting Installer ───────────────────────────────────────
 # Version: __VERSION__
 # Built:   __BUILD_DATE__
-# Usage:   ./setup.sh install | uninstall | update
+# Usage:   ./setup.sh install | update
 set -euo pipefail
 
 VERSION="__VERSION__"
@@ -19,7 +19,6 @@ Conductor Setup v${VERSION}  (con-pilot v${CON_PILOT_VERSION})
 
 Usage:
   ./setup.sh install   CONDUCTOR_HOME     Extract and install Conductor
-  ./setup.sh uninstall                     Remove Conductor completely
   ./setup.sh update                        Update to this version (v${VERSION})
   ./setup.sh version                       Show bundled version
   ./setup.sh help                          Show this help message
@@ -27,6 +26,16 @@ Usage:
 Arguments:
   CONDUCTOR_HOME   Target directory (required for install)
 EOF
+}
+
+# ── Preflight checks ──────────────────────────────────────────────────────────
+
+require_flatpak() {
+  if ! command -v flatpak >/dev/null 2>&1; then
+    echo "Error: Flatpak is not installed." >&2
+    echo "Install it first:  https://flatpak.org/setup/" >&2
+    exit 1
+  fi
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -133,6 +142,7 @@ show_key() {
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 cmd_install() {
+  require_flatpak
   if [[ -z "${1:-}" ]]; then
     echo "Error: CONDUCTOR_HOME is required." >&2
     echo "Usage: ./setup.sh install CONDUCTOR_HOME" >&2
@@ -159,49 +169,8 @@ cmd_install() {
   echo "Run:  source ${BASHRC}"
 }
 
-cmd_uninstall() {
-  echo "Uninstalling Conductor…"
-
-  # Stop server
-  if pgrep -f 'con-pilot serve' >/dev/null 2>&1; then
-    pkill -f 'con-pilot serve' || true
-    echo "Stopped con-pilot serve process."
-  fi
-
-  # Remove Flatpak
-  if flatpak --user info "$APP_ID" &>/dev/null; then
-    flatpak --user uninstall -y "$APP_ID"
-    echo "Removed Flatpak ${APP_ID}."
-  fi
-
-  # Clean .bashrc
-  if [[ -f "$BASHRC" ]]; then
-    sed -i '/^export CONDUCTOR_HOME=/d' "$BASHRC"
-    sed -i '/^export CON_PILOT_HOST=/d' "$BASHRC"
-    sed -i '/^export CON_PILOT_PORT=/d' "$BASHRC"
-    sed -i '/^# Conductor$/d'          "$BASHRC"
-    echo "Removed env vars from ${BASHRC}."
-  fi
-
-  # Clean venvs and sandbox data
-  local venv_dir="${XDG_DATA_HOME:-$HOME/.local/share}/con-pilot"
-  [[ -d "$venv_dir" ]] && rm -rf "$venv_dir" && echo "Removed ${venv_dir}."
-
-  local flatpak_data="$HOME/.var/app/${APP_ID}"
-  [[ -d "$flatpak_data" ]] && rm -rf "$flatpak_data" && echo "Removed ${flatpak_data}."
-
-  # Remove install directory
-  local conductor_home="${CONDUCTOR_HOME:-$DEFAULT_HOME}"
-  if [[ -d "$conductor_home" ]]; then
-    rm -rf "$conductor_home"
-    echo "Removed ${conductor_home}."
-  fi
-
-  echo ""
-  echo "Conductor uninstalled. Restart your shell or run:  source ${BASHRC}"
-}
-
 cmd_update() {
+  require_flatpak
   local conductor_home="${CONDUCTOR_HOME:-}"
   if [[ -z "$conductor_home" ]]; then
     echo "Error: CONDUCTOR_HOME is not set. Run 'source ~/.bashrc' or install first." >&2
@@ -256,7 +225,6 @@ fi
 
 case "$1" in
   install)   shift; cmd_install "$@" ;;
-  uninstall) cmd_uninstall ;;
   update)    cmd_update ;;
   version)   echo "Conductor v${VERSION}  (con-pilot v${CON_PILOT_VERSION})" ;;
   help|--help|-h) usage ;;
