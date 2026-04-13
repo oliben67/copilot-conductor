@@ -119,7 +119,17 @@ class ConPilot:
 
     @property
     def key_file(self) -> str:
-        return os.path.join(self.home, "python", "con-pilot", "key")
+        # Prefer XDG_DATA_HOME (flatpak sandbox) for new installs
+        xdg_data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+        flatpak_key = os.path.join(xdg_data, "key")
+        if os.path.exists(flatpak_key):
+            return flatpak_key
+        # Fall back to legacy location
+        legacy_key = os.path.join(self.home, "python", "con-pilot", "key")
+        if os.path.exists(legacy_key):
+            return legacy_key
+        # Default to flatpak location for new keys
+        return flatpak_key
 
     def _load_or_generate_key(self) -> str:
         """Return the system key, generating and persisting a new GUID on first call."""
@@ -132,6 +142,7 @@ class ConPilot:
         key = str(uuid.uuid4())
         with open(self.key_file, "w") as f:
             f.write(key)
+        os.chmod(self.key_file, 0o600)
         log.info("Generated new system key: %s", self.key_file)
         return key
 

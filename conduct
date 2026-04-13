@@ -2,43 +2,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONDUCTOR_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]')"
-CON_PILOT_VERSION="$(grep -m1 '^version' "$SCRIPT_DIR/python/con-pilot/pyproject.toml" 2>/dev/null | sed 's/.*"\(.*\)"/\1/' || echo 'unknown')"
 CON_PILOT_HOST="${CON_PILOT_HOST:-localhost}"
 CON_PILOT_PORT="${CON_PILOT_PORT:-8000}"
 BASE_URL="http://${CON_PILOT_HOST}:${CON_PILOT_PORT}"
 
-# ── Bootstrap: ensure task (go-task) is installed ─────────────────────────────
-
-ensure_task() {
-  if command -v task &>/dev/null; then
-    return
-  fi
-
-  echo "task (go-task) not found. Installing…"
-
-  if command -v brew &>/dev/null; then
-    brew install go-task
-  elif command -v snap &>/dev/null; then
-    sudo snap install task --classic
-  elif command -v apt-get &>/dev/null; then
-    sudo sh -c 'curl -fsSL https://taskfile.dev/install.sh | sh -s -- -d -b /usr/local/bin'
-  elif command -v dnf &>/dev/null; then
-    sudo sh -c 'curl -fsSL https://taskfile.dev/install.sh | sh -s -- -d -b /usr/local/bin'
-  elif command -v pacman &>/dev/null; then
-    sudo pacman -S --noconfirm go-task-bin 2>/dev/null || \
-      sudo sh -c 'curl -fsSL https://taskfile.dev/install.sh | sh -s -- -d -b /usr/local/bin'
-  else
-    echo "Could not auto-install task. Install manually: https://taskfile.dev/installation/" >&2
-    exit 1
-  fi
-
-  if ! command -v task &>/dev/null; then
-    echo "Error: task installation failed." >&2
-    exit 1
-  fi
-  echo "task installed successfully."
+# Get version from service or fall back to unknown
+get_version() {
+  curl -sf "${BASE_URL}/version" 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo 'unknown'
 }
+CONDUCTOR_VERSION="$(get_version)"
+CON_PILOT_VERSION="$CONDUCTOR_VERSION"
 
 # ── Usage ─────────────────────────────────────────────────────────────────────
 
@@ -109,23 +82,54 @@ api_post() {
 # ── Service commands ──────────────────────────────────────────────────────────
 
 cmd_start() {
-  task -d "$SCRIPT_DIR" start
+  local APP_ID="${APP_ID:-io.conductor.ConPilot}"
+  local CONDUCTOR_HOME="${CONDUCTOR_HOME:-$HOME/.conductor}"
+
+  if pgrep -f 'con-pilot serve' >/dev/null 2>&1; then
+    echo "con-pilot is already running."
+    return 0
+  fi
+
+  local LOG="$CONDUCTOR_HOME/.github/scripts/sync_agents.log"
+  mkdir -p "$(dirname "$LOG")"
+  setsid flatpak run "$APP_ID" serve "$@" >> "$LOG" 2>&1 &
+  local PID=$!
+  echo "con-pilot started (PID $PID), logging to $LOG"
+
+  local HEALTH_URL="http://${CON_PILOT_HOST}:${CON_PILOT_PORT}/health"
+  for i in $(seq 1 15); do
+    if curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
+      echo "Health check passed."
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Warning: health check did not pass within 15s."
 }
 
 cmd_stop() {
-  task -d "$SCRIPT_DIR" stop
+  pkill -f 'con-pilot serve' && echo "Stopped." || echo "Not running."
 }
 
 cmd_status() {
-  task -d "$SCRIPT_DIR" status
+  local PIDS
+  PIDS=$(pgrep -f 'con-pilot serve' || true)
+  if [ -n "$PIDS" ]; then
+    echo "con-pilot is running (PID $PIDS)"
+    ss -tlnp 2>/dev/null | grep -E ':(8[0-9]{3})\b' || true
+  else
+    echo "con-pilot is NOT running."
+  fi
 }
 
 cmd_sync() {
-  task -d "$SCRIPT_DIR" sync
+  local APP_ID="${APP_ID:-io.conductor.ConPilot}"
+  flatpak run "$APP_ID" sync
 }
 
 cmd_logs() {
-  task -d "$SCRIPT_DIR" logs
+  local CONDUCTOR_HOME="${CONDUCTOR_HOME:-$HOME/.conductor}"
+  tail -f "$CONDUCTOR_HOME/.github/scripts/sync_agents.log"
 }
 
 # ── Project commands ──────────────────────────────────────────────────────────
@@ -218,14 +222,8 @@ if [[ $# -eq 0 ]]; then
   exit 0
 fi
 
-# Commands that delegate to task need it installed
 case "$1" in
-  start|stop|status|sync|logs)
-    ensure_task ;;
-esac
-
-case "$1" in
-  start)     cmd_start ;;
+  start)     shift; cmd_start "$@" ;;
   stop)      cmd_stop ;;
   status)    cmd_status ;;
   sync)      cmd_sync ;;

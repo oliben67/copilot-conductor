@@ -18,13 +18,13 @@ usage() {
 Conductor Setup v${VERSION}  (con-pilot v${CON_PILOT_VERSION})
 
 Usage:
-  ./setup.sh install   CONDUCTOR_HOME     Extract and install Conductor
-  ./setup.sh update                        Update to this version (v${VERSION})
-  ./setup.sh version                       Show bundled version
-  ./setup.sh help                          Show this help message
+  ./$0 install   [CONDUCTOR_HOME]   Extract and install Conductor
+  ./$0 update                        Update to this version (v${VERSION})
+  ./$0 version                       Show bundled version
+  ./$0 help                          Show this help message
 
 Arguments:
-  CONDUCTOR_HOME   Target directory (required for install)
+  CONDUCTOR_HOME   Target directory (uses \$CONDUCTOR_HOME if set)
 EOF
 }
 
@@ -102,9 +102,19 @@ install_flatpak() {
   echo "Forwarded env vars into the Flatpak sandbox."
 }
 
+stop_existing() {
+  if pgrep -f 'con-pilot serve' >/dev/null 2>&1; then
+    echo "Stopping existing con-pilot process…"
+    pkill -f 'con-pilot serve' || true
+    sleep 1
+  fi
+}
+
 start_and_healthcheck() {
   local host="${CON_PILOT_HOST:-localhost}"
   local port="${CON_PILOT_PORT:-8000}"
+
+  stop_existing
 
   flatpak run "$APP_ID" serve &
   local pid=$!
@@ -129,30 +139,50 @@ start_and_healthcheck() {
 }
 
 show_key() {
-  local key_file="$1/python/con-pilot/key"
-  if [[ -f "$key_file" ]]; then
-    echo ""
-    echo "ADMIN KEY (save this NOW — it will NOT be shown again): $(cat "$key_file")"
-    echo ""
-    shred -uz "$key_file" 2>/dev/null || rm -f "$key_file"
-    echo "Key file erased. Store the key in a safe place."
-  fi
+  local flatpak_data="$HOME/.var/app/${APP_ID}/data"
+  local key_file="${flatpak_data}/key"
+  
+  # Generate a new key at deployment time
+  mkdir -p "$flatpak_data"
+  local new_key
+  new_key="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
+  echo "$new_key" > "$key_file"
+  chmod 600 "$key_file"
+  
+  echo ""
+  echo "ADMIN KEY (save this NOW — it will NOT be shown again): $new_key"
+  echo ""
+  echo "Key stored in Flatpak sandbox at ${key_file}"
 }
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 cmd_install() {
   require_flatpak
-  if [[ -z "${1:-}" ]]; then
-    echo "Error: CONDUCTOR_HOME is required." >&2
-    echo "Usage: ./setup.sh install CONDUCTOR_HOME" >&2
-    exit 1
+  local conductor_home="${1:-}"
+
+  # If no argument provided, check if CONDUCTOR_HOME is already set
+  if [[ -z "$conductor_home" ]]; then
+    if [[ -n "${CONDUCTOR_HOME:-}" ]]; then
+      echo "CONDUCTOR_HOME is already set to: ${CONDUCTOR_HOME}"
+      read -r -p "Install to this location? [Y/n] " answer
+      case "${answer:-Y}" in
+        [Yy]*|"") conductor_home="$CONDUCTOR_HOME" ;;
+        *)
+          echo "Aborted."
+          exit 0
+          ;;
+      esac
+    else
+      echo "Error: CONDUCTOR_HOME is required." >&2
+      echo "Usage: ./setup.sh install CONDUCTOR_HOME" >&2
+      exit 1
+    fi
   fi
-  local conductor_home="$1"
+
   echo "Installing Conductor v${VERSION} to ${conductor_home}…"
 
   extract_to "$conductor_home"
-  printf '%s\n' "$VERSION" > "${conductor_home}/VERSION"
   echo "Extracted to ${conductor_home}."
   grep -q '# Conductor' "$BASHRC" 2>/dev/null || printf '\n# Conductor\n' >> "$BASHRC"
   persist_var CONDUCTOR_HOME "$conductor_home"
@@ -162,7 +192,11 @@ cmd_install() {
 
   install_flatpak "$conductor_home" false
   start_and_healthcheck
-  show_key "$conductor_home"
+  show_key
+
+  # Clean up: leave only conduct, README.md, uninstall.sh
+  rm -rf "${conductor_home}/python"
+  echo "Cleaned up installation files."
 
   echo ""
   echo "Conductor v${VERSION} installed successfully."
@@ -177,22 +211,7 @@ cmd_update() {
     exit 1
   fi
 
-  # Check installed version
-  local installed_version=""
-  if [[ -f "${conductor_home}/VERSION" ]]; then
-    installed_version="$(cat "${conductor_home}/VERSION" | tr -d '[:space:]')"
-  fi
-
-  if [[ "$installed_version" == "$VERSION" ]]; then
-    echo "Conductor is already at v${VERSION}. Nothing to do."
-    exit 0
-  fi
-
-  if [[ -n "$installed_version" ]]; then
-    echo "Updating Conductor from v${installed_version} to v${VERSION}…"
-  else
-    echo "Installing Conductor v${VERSION} (no previous version found)…"
-  fi
+  echo "Updating Conductor to v${VERSION}…"
 
   # Stop server before update
   if pgrep -f 'con-pilot serve' >/dev/null 2>&1; then
@@ -200,17 +219,16 @@ cmd_update() {
     echo "Stopped running con-pilot serve."
   fi
 
-  # Remove files excluded from the deployment archive (stale from older versions)
-  rm -f "${conductor_home}/.gitignore"
-  rm -f "${conductor_home}/setup.sh.header"
-
   extract_to "$conductor_home"
-  printf '%s\n' "$VERSION" > "${conductor_home}/VERSION"
   echo "Extracted v${VERSION} to ${conductor_home}."
 
   install_flatpak "$conductor_home" true
   start_and_healthcheck
-  show_key "$conductor_home"
+  show_key
+
+  # Clean up: leave only conduct, README.md, uninstall.sh
+  rm -rf "${conductor_home}/python"
+  echo "Cleaned up installation files."
 
   echo ""
   echo "Conductor updated to v${VERSION}."
