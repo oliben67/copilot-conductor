@@ -28,6 +28,7 @@ Service commands:
   status                     Show whether con-pilot is running
   sync                       Trigger a one-shot sync cycle
   logs                       Tail the sync_agents log
+  agents [-p PROJECT] [-j]   List all agents (-j for JSON)
 
 Project commands:
   register <name> <dir>      Register a new project
@@ -132,6 +133,44 @@ cmd_logs() {
   tail -f "$CONDUCTOR_HOME/.github/scripts/sync_agents.log"
 }
 
+cmd_agents() {
+  local project="" json=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -p|--project) project="$2"; shift 2 ;;
+      -j|--json) json="1"; shift ;;
+      *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+
+  local url="${BASE_URL}/agents"
+  [[ -n "$project" ]] && url+="?project=$project"
+
+  local response
+  response=$(curl -sf "$url") || {
+    echo "Error: Could not reach con-pilot service at $BASE_URL" >&2
+    exit 1
+  }
+
+  if [[ -n "$json" ]]; then
+    echo "$response"
+  else
+    # Human-readable output using jq
+    echo "$response" | jq -r '
+      "System Agents:",
+      "------------------------------------------------------------",
+      (.system_agents[] | "  \(if .file_exists then "✓" else "✗" end) \(.role): \(.name) (\(if .active then "active" else "inactive" end))\(if .sidekick then " [sidekick]" else "" end)\(if .file_exists then "\n      → \(.file_path)" else "" end)"),
+      "",
+      "Project Agents:",
+      "------------------------------------------------------------",
+      ((.project_agents | group_by(.project))[] | 
+        "\n  [\(.[0].project)]",
+        (.[] | "    \(if .file_exists then "✓" else "✗" end) \(.role)\(if .instance then " #\(.instance)" else "" end): \(.name) (\(if .active then "active" else "inactive" end))\(if .sidekick then " [sidekick]" else "" end)\(if .file_exists then "\n        → \(.file_path)" else "" end)")
+      )
+    '
+  fi
+}
+
 # ── Project commands ──────────────────────────────────────────────────────────
 
 cmd_register() {
@@ -228,6 +267,7 @@ case "$1" in
   status)    cmd_status ;;
   sync)      cmd_sync ;;
   logs)      cmd_logs ;;
+  agents)    shift; cmd_agents "$@" ;;
   register)  shift; cmd_register "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
   admin)     shift; cmd_admin "$@" ;;
