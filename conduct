@@ -63,6 +63,189 @@ Examples:
 EOF
 }
 
+usage_start() {
+  cat <<EOF
+conduct start — Start the con-pilot service
+
+Usage:
+  conduct start [options]
+
+Description:
+  Starts the con-pilot service as a background process using Flatpak.
+  If the service is already running, this command does nothing.
+
+Options:
+  --help, -h    Show this help message
+
+Environment:
+  APP_ID          Flatpak application ID (default: io.conductor.ConPilot)
+  CONDUCTOR_HOME  Base directory for conductor (default: ~/.conductor)
+  CON_PILOT_HOST  Service host (default: localhost)
+  CON_PILOT_PORT  Service port (default: 8000)
+
+Example:
+  conduct start
+EOF
+}
+
+usage_stop() {
+  cat <<EOF
+conduct stop — Stop the con-pilot service
+
+Usage:
+  conduct stop
+
+Description:
+  Stops any running con-pilot service processes.
+
+Options:
+  --help, -h    Show this help message
+
+Example:
+  conduct stop
+EOF
+}
+
+usage_status() {
+  cat <<EOF
+conduct status — Show whether con-pilot is running
+
+Usage:
+  conduct status
+
+Description:
+  Displays the current status of the con-pilot service, including
+  the process ID if running and any listening ports.
+
+Options:
+  --help, -h    Show this help message
+
+Example:
+  conduct status
+EOF
+}
+
+usage_sync() {
+  cat <<EOF
+conduct sync — Trigger a one-shot sync cycle
+
+Usage:
+  conduct sync
+
+Description:
+  Runs a single agent synchronization cycle immediately using Flatpak.
+  This will update agent files based on the current conductor.json configuration.
+
+Options:
+  --help, -h    Show this help message
+
+Environment:
+  APP_ID    Flatpak application ID (default: io.conductor.ConPilot)
+
+Example:
+  conduct sync
+EOF
+}
+
+usage_logs() {
+  cat <<EOF
+conduct logs — Tail the sync_agents log
+
+Usage:
+  conduct logs
+
+Description:
+  Follows the sync_agents.log file in real-time, displaying new entries
+  as they are written. Press Ctrl+C to stop.
+
+Options:
+  --help, -h    Show this help message
+
+Environment:
+  CONDUCTOR_HOME    Base directory for conductor (default: ~/.conductor)
+
+Log location:
+  \$CONDUCTOR_HOME/.github/scripts/sync_agents.log
+
+Example:
+  conduct logs
+EOF
+}
+
+usage_agents() {
+  cat <<EOF
+conduct agents — List all agents
+
+Usage:
+  conduct agents [options]
+
+Description:
+  Lists all configured agents (system and project scoped) from the
+  con-pilot service, showing their status and file locations.
+
+Options:
+  -p, --project PROJECT   Filter agents by project name
+  -j, --json              Output raw JSON response
+  --help, -h              Show this help message
+
+Output:
+  ✓ = agent file exists    ✗ = agent file missing
+  [sidekick] = designated sidekick agent
+
+Examples:
+  conduct agents                     # List all agents
+  conduct agents -p my-project       # List agents for specific project
+  conduct agents -j                  # Output as JSON
+  conduct agents -p my-project -j    # JSON for specific project
+EOF
+}
+
+usage_register() {
+  cat <<EOF
+conduct register — Register a new project
+
+Usage:
+  conduct register <name> <directory>
+
+Description:
+  Registers a new project with the con-pilot service. The project will
+  be added to the project registry and project-scoped agents will be
+  created for it.
+
+Arguments:
+  name        Unique name for the project
+  directory   Absolute path to the project directory
+
+Options:
+  --help, -h    Show this help message
+
+Example:
+  conduct register my-app /home/user/projects/my-app
+EOF
+}
+
+usage_retire() {
+  cat <<EOF
+conduct retire — Retire a project
+
+Usage:
+  conduct retire <name>
+
+Description:
+  Retires a project from the con-pilot service. Project-scoped agents
+  will be moved to the retired/ directory.
+
+Arguments:
+  name    Name of the project to retire
+
+Options:
+  --help, -h    Show this help message
+
+Example:
+  conduct retire my-old-project
+EOF
+}
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 require_key() {
@@ -83,6 +266,13 @@ api_post() {
 # ── Service commands ──────────────────────────────────────────────────────────
 
 cmd_start() {
+  # Handle --help
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) usage_start; exit 0 ;;
+    esac
+  done
+
   local APP_ID="${APP_ID:-io.conductor.ConPilot}"
   local CONDUCTOR_HOME="${CONDUCTOR_HOME:-$HOME/.conductor}"
 
@@ -109,10 +299,22 @@ cmd_start() {
 }
 
 cmd_stop() {
+  # Handle --help
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) usage_stop; exit 0 ;;
+    esac
+  done
   pkill -f 'con-pilot serve' && echo "Stopped." || echo "Not running."
 }
 
 cmd_status() {
+  # Handle --help
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) usage_status; exit 0 ;;
+    esac
+  done
   local PIDS
   PIDS=$(pgrep -f 'con-pilot serve' || true)
   if [ -n "$PIDS" ]; then
@@ -124,11 +326,23 @@ cmd_status() {
 }
 
 cmd_sync() {
+  # Handle --help
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) usage_sync; exit 0 ;;
+    esac
+  done
   local APP_ID="${APP_ID:-io.conductor.ConPilot}"
   flatpak run "$APP_ID" sync
 }
 
 cmd_logs() {
+  # Handle --help
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) usage_logs; exit 0 ;;
+    esac
+  done
   local CONDUCTOR_HOME="${CONDUCTOR_HOME:-$HOME/.conductor}"
   tail -f "$CONDUCTOR_HOME/.github/scripts/sync_agents.log"
 }
@@ -137,6 +351,7 @@ cmd_agents() {
   local project="" json=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help) usage_agents; exit 0 ;;
       -p|--project) project="$2"; shift 2 ;;
       -j|--json) json="1"; shift ;;
       *) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -174,6 +389,12 @@ cmd_agents() {
 # ── Project commands ──────────────────────────────────────────────────────────
 
 cmd_register() {
+  # Handle --help
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) usage_register; exit 0 ;;
+    esac
+  done
   if [[ $# -lt 2 ]]; then
     echo "Usage: conduct register <name> <directory>" >&2
     exit 1
@@ -182,6 +403,12 @@ cmd_register() {
 }
 
 cmd_retire() {
+  # Handle --help
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) usage_retire; exit 0 ;;
+    esac
+  done
   if [[ $# -lt 1 ]]; then
     echo "Usage: conduct retire <name>" >&2
     exit 1
@@ -196,6 +423,14 @@ cmd_admin() {
     usage_admin
     exit 0
   fi
+
+  # Handle --help as first argument
+  case "$1" in
+    -h|--help|help)
+      usage_admin
+      exit 0
+      ;;
+  esac
 
   local subcmd="$1"; shift
 
@@ -212,7 +447,7 @@ cmd_admin() {
         ADMIN_KEY="$2"; shift 2 ;;
       --key=*)
         ADMIN_KEY="${1#--key=}"; shift ;;
-      help|--help|-h)
+      -h|--help)
         usage_admin; exit 0 ;;
       *)
         positional+=("$1"); shift ;;
@@ -263,10 +498,10 @@ fi
 
 case "$1" in
   start)     shift; cmd_start "$@" ;;
-  stop)      cmd_stop ;;
-  status)    cmd_status ;;
-  sync)      cmd_sync ;;
-  logs)      cmd_logs ;;
+  stop)      shift; cmd_stop "$@" ;;
+  status)    shift; cmd_status "$@" ;;
+  sync)      shift; cmd_sync "$@" ;;
+  logs)      shift; cmd_logs "$@" ;;
   agents)    shift; cmd_agents "$@" ;;
   register)  shift; cmd_register "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
