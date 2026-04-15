@@ -188,13 +188,26 @@ cmd_install() {
   persist_var CONDUCTOR_HOME "$conductor_home"
   persist_var CON_PILOT_HOST "${CON_PILOT_HOST:-localhost}"
   persist_var CON_PILOT_PORT "${CON_PILOT_PORT:-8000}"
+  
+  # Install bash completion
+  local completion_dir="$HOME/.local/share/bash-completion/completions"
+  mkdir -p "$completion_dir"
+  if [[ -f "${conductor_home}/conduct.bash-completion" ]]; then
+    cp "${conductor_home}/conduct.bash-completion" "$completion_dir/conduct"
+    echo "Bash completion installed to ${completion_dir}/conduct"
+  fi
+  # Also add to PATH if not already there
+  if ! grep -q "PATH=.*${conductor_home}" "$BASHRC" 2>/dev/null; then
+    echo "export PATH=\"\$PATH:${conductor_home}\"" >> "$BASHRC"
+  fi
+  
   echo "Environment variables persisted in ${BASHRC}."
 
   install_flatpak "$conductor_home" false
   start_and_healthcheck
   show_key
 
-  # Clean up: leave only conduct, README.md, uninstall.sh
+  # Clean up: leave only conduct, README.md, uninstall.sh, conduct.bash-completion
   rm -rf "${conductor_home}/python"
   echo "Cleaned up installation files."
 
@@ -222,11 +235,19 @@ cmd_update() {
   extract_to "$conductor_home"
   echo "Extracted v${VERSION} to ${conductor_home}."
 
+  # Update bash completion
+  local completion_dir="$HOME/.local/share/bash-completion/completions"
+  mkdir -p "$completion_dir"
+  if [[ -f "${conductor_home}/conduct.bash-completion" ]]; then
+    cp "${conductor_home}/conduct.bash-completion" "$completion_dir/conduct"
+    echo "Bash completion updated."
+  fi
+
   install_flatpak "$conductor_home" true
   start_and_healthcheck
   show_key
 
-  # Clean up: leave only conduct, README.md, uninstall.sh
+  # Clean up: leave only conduct, README.md, uninstall.sh, conduct.bash-completion
   rm -rf "${conductor_home}/python"
   echo "Cleaned up installation files."
 
