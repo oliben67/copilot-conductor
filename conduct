@@ -437,6 +437,7 @@ cmd_admin() {
   # Parse --key from remaining args
   ADMIN_KEY=""
   local positional=()
+  local show_help=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --key)
@@ -448,11 +449,17 @@ cmd_admin() {
       --key=*)
         ADMIN_KEY="${1#--key=}"; shift ;;
       -h|--help)
-        usage_admin; exit 0 ;;
+        show_help="1"; shift ;;
       *)
         positional+=("$1"); shift ;;
     esac
   done
+
+  # Show help if requested (before requiring key)
+  if [[ -n "$show_help" ]]; then
+    usage_admin
+    exit 0
+  fi
 
   require_key
 
