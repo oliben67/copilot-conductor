@@ -22,6 +22,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from con_pilot.models import AgentInfo, AgentListResponse, ConductorConfig
+
 try:
     from croniter import croniter
 
@@ -62,7 +64,7 @@ class ConPilot:
 
     def __init__(self, conductor_home: str | None = None) -> None:
         self.home: str = self._resolve_home(conductor_home)
-        self._cfg: dict | None = None
+        self._cfg: ConductorConfig | None = None
 
     # ── Bootstrap ──────────────────────────────────────────────────────────────
 
@@ -186,7 +188,7 @@ class ConPilot:
 
     def _role_cron_root(self, role: str, project: str | None = None) -> str:
         """Return the cron directory for a role: project-scoped or system-level."""
-        scope = self.config.get("agent", {}).get(role, {}).get("scope", "system")
+        scope = self.config.get_agent_dict(role).get("scope", "system")
         if scope == "project" and project:
             return self.project_cron_dir(project)
         return self.cron_dir
@@ -198,30 +200,127 @@ class ConPilot:
     # ── Config ─────────────────────────────────────────────────────────────────
 
     @property
-    def config(self) -> dict:
+    def config(self) -> ConductorConfig:
         """Return conductor.json as a dict (lazy-loaded, cached per instance)."""
         if self._cfg is None:
             with open(self.config_path) as f:
-                self._cfg = json.load(f)
+                self._cfg = ConductorConfig(**json.load(f))
         return self._cfg
 
-    def reload_config(self) -> dict:
+    def reload_config(self) -> ConductorConfig:
         """Discard the cached config and reload from disk."""
         self._cfg = None
         return self.config
 
     @property
     def default_model(self) -> str:
-        return self.config.get("models", {}).get("default_model", "claude-opus-4.6")
+        return self.config.models.default_model
 
     @property
     def active_roles(self) -> set[str]:
         """Return the set of active non-conductor role keys."""
         return {
             k
-            for k, v in self.config.get("agent", {}).items()
-            if k != "conductor" and v.get("active", False)
+            for k, v in self.config.agents.items()
+            if k != "conductor" and v.active
         }
+
+    def list_agents(self, project: str | None = None) -> AgentListResponse:
+        """
+        List all agents defined in conductor.json with their status.
+
+        Args:
+            project: Optional project name to filter project-scoped agents.
+                     If None, lists all registered projects.
+
+        Returns:
+            AgentListResponse with system_agents and project_agents lists.
+        """
+        cfg = self.config
+        system_agents: list[AgentInfo] = []
+        project_agents: list[AgentInfo] = []
+
+        # Get all registered projects from trust.json
+        trust = self._load_trust()
+        registered_projects = [p for p in trust.keys() if p != "conductor"]
+
+        for role, agent_cfg in cfg.agents.items():
+            scope = agent_cfg.scope
+            instances = agent_cfg.instances
+            max_inst = instances.max if instances else None
+
+            if scope == "system":
+                # System agent - single file in .github/agents/
+                fname = f"{role}.agent.md"
+                fpath = os.path.join(self.agents_dir, fname)
+                exists = os.path.exists(fpath)
+
+                system_agents.append(AgentInfo(
+                    role=role,
+                    name=self._expand_name(agent_cfg.name or role),
+                    scope="system",
+                    active=agent_cfg.active,
+                    file_exists=exists,
+                    file_path=fpath if exists else None,
+                    sidekick=agent_cfg.sidekick,
+                    model=agent_cfg.model,
+                    description=agent_cfg.description,
+                ))
+            else:
+                # Project-scoped agent - check each project
+                projects_to_check = [project] if project else registered_projects
+                for proj in projects_to_check:
+                    if not proj:
+                        continue
+                    p_agents_dir = self.project_agents_dir(proj)
+
+                    if max_inst and max_inst > 1:
+                        # Multi-instance agent
+                        for i in range(1, max_inst + 1):
+                            fname = f"{role}.{proj}.{i}.agent.md"
+                            fpath = os.path.join(p_agents_dir, fname)
+                            exists = os.path.exists(fpath)
+                            expanded_name = self._expand_name(
+                                agent_cfg.name or role, project=proj, rank=i
+                            )
+                            project_agents.append(AgentInfo(
+                                role=role,
+                                name=expanded_name,
+                                scope="project",
+                                active=agent_cfg.active,
+                                file_exists=exists,
+                                file_path=fpath if exists else None,
+                                project=proj,
+                                instance=i,
+                                sidekick=agent_cfg.sidekick,
+                                model=agent_cfg.model,
+                                description=agent_cfg.description,
+                            ))
+                    else:
+                        # Single-instance project agent
+                        fname = f"{role}.{proj}.agent.md"
+                        fpath = os.path.join(p_agents_dir, fname)
+                        exists = os.path.exists(fpath)
+                        expanded_name = self._expand_name(
+                            agent_cfg.name or role, project=proj
+                        )
+                        project_agents.append(AgentInfo(
+                            role=role,
+                            name=expanded_name,
+                            scope="project",
+                            active=agent_cfg.active,
+                            file_exists=exists,
+                            file_path=fpath if exists else None,
+                            project=proj,
+                            sidekick=agent_cfg.sidekick,
+                            model=agent_cfg.model,
+                            description=agent_cfg.description,
+                        ))
+
+        return AgentListResponse(
+            system_agents=system_agents,
+            project_agents=project_agents,
+        )
 
     def _service_config(self) -> tuple[str, int]:
         """Read [con-pilot] host/port from $CONDUCTOR_HOME/.env (TOML). Falls back to localhost:8000."""
@@ -241,19 +340,19 @@ class ConPilot:
         trust = self._load_trust()
         dirs = list(dict.fromkeys(trust.values()))  # ordered, deduplicated
 
-        agents = self.config.get("agent", {})
-        conductor_name = agents.get("conductor", {}).get("name", "conductor")
+        agents = self.config.agents
+        conductor_name = agents["conductor"].name
         project = os.environ.get("PROJECT_NAME") or None
 
-        active = {k: v for k, v in agents.items() if k != "conductor" and v.get("active", False)}
-        sidekick_roles = [k for k, v in active.items() if v.get("sidekick", False)]
+        active = {k: v for k, v in agents.items() if k != "conductor" and v.active}
+        sidekick_roles = [k for k, v in active.items() if v.sidekick]
 
         if len(sidekick_roles) > 1:
             role_cfg = active.get("developer") if "developer" in sidekick_roles else None
-            raw = role_cfg.get("name", "developer") if role_cfg else conductor_name
+            raw = role_cfg.name if role_cfg else conductor_name
             sidekick_name = self._expand_name(raw, project=project, rank=1)
         elif len(sidekick_roles) == 1:
-            raw = active[sidekick_roles[0]].get("name", sidekick_roles[0])
+            raw = active[sidekick_roles[0]].name if active[sidekick_roles[0]].name else sidekick_roles[0]   
             sidekick_name = self._expand_name(raw, project=project, rank=1)
         else:
             sidekick_name = conductor_name
@@ -488,7 +587,7 @@ class ConPilot:
         For system agents (or when project is None) looks in .github/agents/.
         For project agents looks in .github/projects/{project}/agents/.
         """
-        scope = self.config.get("agent", {}).get(role, {}).get("scope", "system")
+        scope = self.config.get_agent_dict(role).get("scope", "system")
         if scope == "project" and project:
             search_dir = self.project_agents_dir(project)
             # Match role.project.agent.md and role.project.N.agent.md
@@ -512,7 +611,7 @@ class ConPilot:
         """
         if role == "conductor":
             raise ValueError("The conductor agent cannot be updated via con-pilot.")
-        scope = self.config.get("agent", {}).get(role, {}).get("scope", "system")
+        scope = self.config.get_agent_dict(role).get("scope", "system")
         if scope != "project":
             expected = self._load_or_generate_key()
             if key != expected:
@@ -578,7 +677,7 @@ class ConPilot:
                 f"No agent files found for role='{role}'"
                 + (f" project='{project}'" if project else "")
             )
-        role_cfg = self.config.get("agent", {}).get(role, {})
+        role_cfg = self.config.get_agent_dict(role)
         name_tmpl = role_cfg.get("name", role)
         max_inst = role_cfg.get("instances", {}).get("max")
 
@@ -691,7 +790,7 @@ class ConPilot:
         os.makedirs(self.agents_dir, exist_ok=True)
         os.makedirs(self.retired_dir, exist_ok=True)
 
-        agent_cfg = self.config.get("agent", {})
+        agent_cfg = self.config.agent_dicts
 
         # Build list: conductor first, then other active system-scoped roles
         system_roles = ["conductor"] + [
@@ -736,7 +835,7 @@ class ConPilot:
         """
         cfg = self.reload_config()
         roles = self.active_roles
-        agent_cfg = cfg.get("agent", {})
+        agent_cfg = cfg.agent_dicts
 
         os.makedirs(self.agents_dir, exist_ok=True)
         os.makedirs(self.retired_dir, exist_ok=True)
@@ -886,7 +985,7 @@ class ConPilot:
         now = datetime.now(tz=UTC)
         if not HAS_CRONITER:
             return (now - last_run).total_seconds() >= 86400
-        cron = croniter(schedule, last_run.replace(tzinfo=None))
+        cron = croniter(schedule, last_run.replace(tzinfo=None)) # type: ignore
         next_run = cron.get_next(datetime).replace(tzinfo=UTC)
         return now >= next_run
 
@@ -916,7 +1015,7 @@ class ConPilot:
         os.makedirs(self.cron_dir, exist_ok=True)
         os.makedirs(self.cron_state_dir, exist_ok=True)
 
-        for role, role_cfg in self.config.get("agent", {}).items():
+        for role, role_cfg in self.config.agent_dicts.items():
             if not role_cfg.get("has_cron_jobs", False):
                 continue
             if not role_cfg.get("active", role == "conductor"):
@@ -993,6 +1092,10 @@ class ConPilot:
         @app.get("/health")
         def health() -> dict:
             return {"status": "ok"}
+
+        @app.get("/agents")
+        def list_agents_route(project: str | None = None) -> AgentListResponse:
+            return self.list_agents(project=project)
 
         @app.post("/sync")
         def sync_route() -> dict:

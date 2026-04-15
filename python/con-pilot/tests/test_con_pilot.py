@@ -15,12 +15,12 @@ import pytest
 
 from con_pilot.conductor import ConPilot
 from con_pilot.main import main
-
+from con_pilot.models import ConductorConfig
 
 # ── Minimal conductor.json shared across all tests ───────────────────────────
 
 _CONFIG = {
-    "models": {"default_model": "test-model"},
+    "models": {"authorized_models": ["test-model"], "default_model": "test-model"},
     "agent": {
         "conductor": {"name": "uppity", "active": True, "scope": "system"},
         "support": {
@@ -46,6 +46,9 @@ _CONFIG = {
     },
 }
 
+# Pre-built ConductorConfig model for tests that need to set _cfg directly
+_CONFIG_MODEL = ConductorConfig(**_CONFIG)
+
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -56,7 +59,9 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "conductor.json").write_text(json.dumps(_CONFIG, indent=2))
     agents = tmp_path / ".github" / "agents"
     agents.mkdir(parents=True)
-    (agents / "conductor.agent.md").write_text('---\nname: "uppity"\nmodel: "test-model"\n---\n')
+    (agents / "conductor.agent.md").write_text(
+        '---\nname: "uppity"\nmodel: "test-model"\n---\n'
+    )
     (agents / "retired").mkdir()
     (tmp_path / ".github" / "trust.json").write_text(
         json.dumps({"conductor": str(tmp_path)}, indent=2)
@@ -77,7 +82,10 @@ def pilot(home: Path) -> ConPilot:
 
 class TestExpandName:
     def test_both_placeholders(self, pilot: ConPilot) -> None:
-        assert pilot._expand_name("x-[scope:project]-[rank]", project="app", rank=2) == "x-app-2"
+        assert (
+            pilot._expand_name("x-[scope:project]-[rank]", project="app", rank=2)
+            == "x-app-2"
+        )
 
     def test_missing_project_stripped(self, pilot: ConPilot) -> None:
         assert pilot._expand_name("reviewer-[scope:project]") == "reviewer"
@@ -136,6 +144,60 @@ class TestEnv:
 
     def test_default_model(self, pilot: ConPilot) -> None:
         assert pilot.env["COPILOT_DEFAULT_MODEL"] == "test-model"
+
+
+# ── list_agents ──────────────────────────────────────────────────────────────
+
+
+class TestListAgents:
+    def test_lists_system_agents(self, pilot: ConPilot, home: Path) -> None:
+        result = pilot.list_agents()
+        roles = {a.role for a in result.system_agents}
+        assert "conductor" in roles
+        assert "support" in roles
+
+    def test_system_agent_file_exists(self, pilot: ConPilot, home: Path) -> None:
+        result = pilot.list_agents()
+        conductor = next(a for a in result.system_agents if a.role == "conductor")
+        assert conductor.file_exists is True
+        assert conductor.file_path is not None
+
+    def test_system_agent_file_missing(self, pilot: ConPilot, home: Path) -> None:
+        result = pilot.list_agents()
+        support = next(a for a in result.system_agents if a.role == "support")
+        # support.agent.md not created yet (no sync run)
+        assert support.file_exists is False
+
+    def test_lists_project_agents_with_project(
+        self, pilot: ConPilot, home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Register a project so trust.json has an entry
+        proj = tmp_path / "myproj"
+        proj.mkdir()
+        pilot.register("myproj", str(proj))
+        result = pilot.list_agents(project="myproj")
+        roles = {a.role for a in result.project_agents}
+        assert "developer" in roles
+        assert "reviewer" in roles
+
+    def test_multi_instance_agents(
+        self, pilot: ConPilot, home: Path, tmp_path: Path
+    ) -> None:
+        proj = tmp_path / "myproj"
+        proj.mkdir()
+        pilot.register("myproj", str(proj))
+        result = pilot.list_agents(project="myproj")
+        # developer has max=2, so should have 2 entries
+        dev_agents = [a for a in result.project_agents if a.role == "developer"]
+        assert len(dev_agents) == 2
+        assert {a.instance for a in dev_agents} == {1, 2}
+
+    def test_returns_agent_info_fields(self, pilot: ConPilot, home: Path) -> None:
+        result = pilot.list_agents()
+        conductor = next(a for a in result.system_agents if a.role == "conductor")
+        assert conductor.name == "uppity"
+        assert conductor.scope == "system"
+        assert conductor.active is True
 
 
 # ── sync ─────────────────────────────────────────────────────────────────────
@@ -220,12 +282,12 @@ class TestSync:
 
 class TestCron:
     def test_no_cron_agents_no_raise(self, pilot: ConPilot) -> None:
-        pilot._cfg = _CONFIG
+        pilot._cfg = _CONFIG_MODEL
         pilot.cron()
 
     def test_creates_placeholder_cron_file(self, pilot: ConPilot, home: Path) -> None:
-        pilot._cfg = {
-            "models": {},
+        pilot._cfg = ConductorConfig(**{
+            "models": {"authorized_models": ["test-model"], "default_model": "test-model"},
             "agent": {
                 "conductor": {"name": "uppity", "active": True},
                 "support": {
@@ -235,13 +297,13 @@ class TestCron:
                     "has_cron_jobs": True,
                 },
             },
-        }
+        })
         pilot.cron()
         assert (home / ".github" / "agents" / "cron" / "support.cron").exists()
 
     def test_skips_inactive_agent(self, pilot: ConPilot) -> None:
-        pilot._cfg = {
-            "models": {},
+        pilot._cfg = ConductorConfig(**{
+            "models": {"authorized_models": ["test-model"], "default_model": "test-model"},
             "agent": {
                 "conductor": {"name": "uppity", "active": True},
                 "support": {
@@ -251,7 +313,7 @@ class TestCron:
                     "has_cron_jobs": True,
                 },
             },
-        }
+        })
         pilot.cron()  # should not raise or create any cron files
 
 
@@ -351,20 +413,33 @@ class TestAmendAgent:
         pilot.sync()
 
     def test_adds_instructions_section(
-        self, pilot: ConPilot, home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        pilot: ConPilot,
+        home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         self._sync_proj(pilot, monkeypatch)
         instr = tmp_path / "instr.md"
         instr.write_text("- Do A.\n- Do B.")
         pilot.amend_agent(str(instr), "developer", "testproj")
         content = (
-            home / ".github" / "projects" / "testproj" / "agents" / "developer.testproj.1.agent.md"
+            home
+            / ".github"
+            / "projects"
+            / "testproj"
+            / "agents"
+            / "developer.testproj.1.agent.md"
         ).read_text()
         assert "## Instructions" in content
         assert "- Do A." in content
 
     def test_replaces_existing_instructions(
-        self, pilot: ConPilot, home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        pilot: ConPilot,
+        home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         self._sync_proj(pilot, monkeypatch)
         instr = tmp_path / "instr.md"
@@ -373,13 +448,22 @@ class TestAmendAgent:
         instr.write_text("- New.")
         pilot.amend_agent(str(instr), "developer", "testproj")
         content = (
-            home / ".github" / "projects" / "testproj" / "agents" / "developer.testproj.1.agent.md"
+            home
+            / ".github"
+            / "projects"
+            / "testproj"
+            / "agents"
+            / "developer.testproj.1.agent.md"
         ).read_text()
         assert "- New." in content
         assert "- Old." not in content
 
     def test_applies_to_all_instances(
-        self, pilot: ConPilot, home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        pilot: ConPilot,
+        home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         self._sync_proj(pilot, monkeypatch)
         instr = tmp_path / "instr.md"
@@ -387,7 +471,10 @@ class TestAmendAgent:
         pilot.amend_agent(str(instr), "developer", "testproj")
         p = home / ".github" / "projects" / "testproj" / "agents"
         for i in (1, 2):
-            assert "## Instructions" in (p / f"developer.testproj.{i}.agent.md").read_text()
+            assert (
+                "## Instructions"
+                in (p / f"developer.testproj.{i}.agent.md").read_text()
+            )
 
     def test_conductor_always_blocked(self, pilot: ConPilot, tmp_path: Path) -> None:
         instr = tmp_path / "i.md"
@@ -426,7 +513,11 @@ class TestAmendAgent:
 
 class TestReplaceAgent:
     def test_replaces_body_keeps_frontmatter(
-        self, pilot: ConPilot, home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        pilot: ConPilot,
+        home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("PROJECT_NAME", "testproj")
         pilot.sync()
@@ -434,7 +525,12 @@ class TestReplaceAgent:
         instr.write_text("## New Body\nAll new.")
         pilot.replace_agent(str(instr), "reviewer", "testproj")
         content = (
-            home / ".github" / "projects" / "testproj" / "agents" / "reviewer.testproj.agent.md"
+            home
+            / ".github"
+            / "projects"
+            / "testproj"
+            / "agents"
+            / "reviewer.testproj.agent.md"
         ).read_text()
         assert 'name: "reviewer-testproj"' in content
         assert "## New Body" in content
@@ -444,7 +540,9 @@ class TestReplaceAgent:
         instr = tmp_path / "i.md"
         instr.write_text("body.")
         with pytest.raises(ValueError, match="conductor"):
-            pilot.replace_agent(str(instr), "conductor", key=pilot._load_or_generate_key())
+            pilot.replace_agent(
+                str(instr), "conductor", key=pilot._load_or_generate_key()
+            )
 
     def test_system_agent_requires_key(
         self, pilot: ConPilot, home: Path, tmp_path: Path
@@ -463,7 +561,11 @@ class TestReplaceAgent:
 
 class TestResetAgent:
     def test_removes_instructions_section(
-        self, pilot: ConPilot, home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        pilot: ConPilot,
+        home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("PROJECT_NAME", "testproj")
         pilot.sync()
@@ -472,12 +574,21 @@ class TestResetAgent:
         pilot.amend_agent(str(instr), "developer", "testproj")
         pilot.reset_agent("developer", "testproj")
         content = (
-            home / ".github" / "projects" / "testproj" / "agents" / "developer.testproj.1.agent.md"
+            home
+            / ".github"
+            / "projects"
+            / "testproj"
+            / "agents"
+            / "developer.testproj.1.agent.md"
         ).read_text()
         assert "## Instructions" not in content
 
     def test_resets_all_instances(
-        self, pilot: ConPilot, home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        pilot: ConPilot,
+        home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("PROJECT_NAME", "testproj")
         pilot.sync()
@@ -487,7 +598,10 @@ class TestResetAgent:
         pilot.reset_agent("developer", "testproj")
         p = home / ".github" / "projects" / "testproj" / "agents"
         for i in (1, 2):
-            assert "## Instructions" not in (p / f"developer.testproj.{i}.agent.md").read_text()
+            assert (
+                "## Instructions"
+                not in (p / f"developer.testproj.{i}.agent.md").read_text()
+            )
 
     def test_uses_template_when_available(
         self, pilot: ConPilot, home: Path, monkeypatch: pytest.MonkeyPatch
@@ -498,11 +612,16 @@ class TestResetAgent:
         templates.mkdir(exist_ok=True)
         (templates / "developer.agent.md").write_text(
             '---\nname: "PLACEHOLDER"\nmodel: "PLACEHOLDER"\n---\n\n'
-            'You are **PLACEHOLDER**, custom template body.'
+            "You are **PLACEHOLDER**, custom template body."
         )
         pilot.reset_agent("developer", "testproj")
         content = (
-            home / ".github" / "projects" / "testproj" / "agents" / "developer.testproj.1.agent.md"
+            home
+            / ".github"
+            / "projects"
+            / "testproj"
+            / "agents"
+            / "developer.testproj.1.agent.md"
         ).read_text()
         assert "custom template body" in content
 
@@ -534,13 +653,17 @@ class TestCli:
             main()
         mock.assert_called_once()
 
-    def test_setup_env_default(self, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_setup_env_default(
+        self, home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr(sys, "argv", ["con-pilot", "setup-env"])
         with patch("con_pilot.conductor.ConPilot.print_env") as mock:
             main()
         mock.assert_called_once_with(shell=False)
 
-    def test_setup_env_shell_flag(self, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_setup_env_shell_flag(
+        self, home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr(sys, "argv", ["con-pilot", "setup-env", "--shell"])
         with patch("con_pilot.conductor.ConPilot.print_env") as mock:
             main()

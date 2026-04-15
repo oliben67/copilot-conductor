@@ -9,6 +9,8 @@ Usage
   con-pilot setup-env [--shell]    Print session env vars and start watcher.
   con-pilot register NAME DIR      Register a new project.
   con-pilot retire-project NAME    Retire a project.
+  con-pilot list-agents [-p PROJECT] [--json]
+                                   List all agents and their status.
   con-pilot replace FILE ROLE [PROJECT] [--key KEY]
                                    Replace agent body with instructions file.
   con-pilot reset ROLE [PROJECT] [--key KEY]
@@ -41,11 +43,14 @@ def main() -> None:
     sub.add_parser("help", help="Show this help message and exit.")
 
     sub.add_parser(
-        "sync", help="Run one full sync cycle (agent reconcile + cron dispatch) and exit."
+        "sync",
+        help="Run one full sync cycle (agent reconcile + cron dispatch) and exit.",
     )
     sub.add_parser("cron", help="Dispatch cron jobs only and exit.")
 
-    serve_p = sub.add_parser("serve", help="Run the FastAPI service as a continuous server.")
+    serve_p = sub.add_parser(
+        "serve", help="Run the FastAPI service as a continuous server."
+    )
     serve_p.add_argument(
         "-i",
         "--interval",
@@ -78,6 +83,23 @@ def main() -> None:
     )
     retire_p.add_argument("name", help="Project name to retire.")
 
+    list_p = sub.add_parser(
+        "list-agents",
+        help="List all agents defined in conductor.json with their status.",
+    )
+    list_p.add_argument(
+        "--project",
+        "-p",
+        default=None,
+        metavar="PROJECT",
+        help="Filter to a specific project for project-scoped agents.",
+    )
+    list_p.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON instead of human-readable format.",
+    )
+
     def _add_key_arg(p: argparse.ArgumentParser) -> None:
         p.add_argument(
             "--key",
@@ -102,7 +124,9 @@ def main() -> None:
     )
     replace_p.add_argument("file", help="Path to the instructions file.")
     replace_p.add_argument("role", help="Agent role type (e.g. developer, reviewer).")
-    replace_p.add_argument("project", nargs="?", default=None, help="Project name (optional).")
+    replace_p.add_argument(
+        "project", nargs="?", default=None, help="Project name (optional)."
+    )
     _add_key_arg(replace_p)
 
     reset_p = sub.add_parser(
@@ -110,7 +134,9 @@ def main() -> None:
         help="Reset agent(s) to their template / default generated content.",
     )
     reset_p.add_argument("role", help="Agent role type (e.g. developer, reviewer).")
-    reset_p.add_argument("project", nargs="?", default=None, help="Project name (optional).")
+    reset_p.add_argument(
+        "project", nargs="?", default=None, help="Project name (optional)."
+    )
     _add_key_arg(reset_p)
 
     args = parser.parse_args()
@@ -135,6 +161,40 @@ def main() -> None:
         pilot.register(args.name, args.directory)
     elif args.command == "retire-project":
         pilot.retire_project(args.name)
+    elif args.command == "list-agents":
+        result = pilot.list_agents(project=args.project)
+        if args.json:
+            import json  # noqa: PLC0415
+            print(json.dumps(result.model_dump(), indent=2))
+        else:
+            # Human-readable output
+            print("System Agents:")
+            print("-" * 60)
+            for agent in result.system_agents:
+                status = "✓" if agent.file_exists else "✗"
+                active = "active" if agent.active else "inactive"
+                sidekick = " [sidekick]" if agent.sidekick else ""
+                print(f"  {status} {agent.role}: {agent.name} ({active}){sidekick}")
+                if agent.file_path:
+                    print(f"      → {agent.file_path}")
+
+            if result.project_agents:
+                print("\nProject Agents:")
+                print("-" * 60)
+                current_project = None
+                for agent in result.project_agents:
+                    if agent.project != current_project:
+                        current_project = agent.project
+                        print(f"\n  [{current_project}]")
+                    status = "✓" if agent.file_exists else "✗"
+                    active = "active" if agent.active else "inactive"
+                    sidekick = " [sidekick]" if agent.sidekick else ""
+                    instance = f" #{agent.instance}" if agent.instance else ""
+                    print(f"    {status} {agent.role}{instance}: {agent.name} ({active}){sidekick}")
+                    if agent.file_path:
+                        print(f"        → {agent.file_path}")
+            else:
+                print("\nNo project agents found.")
     # amend disabled — pending implementation
     # elif args.command == "amend":
     #     pilot.amend_agent(args.file, args.role, args.project, args.key)

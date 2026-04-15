@@ -18,7 +18,7 @@ import pytest
 _BIN = Path(sys.executable).parent / "con-pilot"
 
 _CONFIG = {
-    "models": {"default_model": "test-model"},
+    "models": {"authorized_models": ["test-model"], "default_model": "test-model"},
     "agent": {
         "conductor": {
             "name": "uppity",
@@ -108,6 +108,32 @@ class TestHelp:
         assert "sync" in r.stdout
 
 
+# ── list-agents ──────────────────────────────────────────────────────────────
+
+
+class TestListAgents:
+    def test_lists_system_agents(self, home: Path) -> None:
+        r = _run("list-agents", home=home)
+        assert r.returncode == 0
+        assert "conductor" in r.stdout
+        assert "support" in r.stdout
+
+    def test_json_output(self, home: Path) -> None:
+        r = _run("list-agents", "--json", home=home)
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert "system_agents" in data
+        assert "project_agents" in data
+
+    def test_project_filter(self, home: Path, tmp_path: Path) -> None:
+        proj = tmp_path / "testproj"
+        proj.mkdir()
+        _run("register", "testproj", str(proj), home=home)
+        r = _run("list-agents", "--project", "testproj", home=home)
+        assert r.returncode == 0
+        assert "developer" in r.stdout
+
+
 # ── sync ─────────────────────────────────────────────────────────────────────
 
 
@@ -136,7 +162,9 @@ class TestSync:
         )
         _run("sync", home=home)
         assert (home / ".github" / "agents" / "support.agent.md").exists()
-        assert not (home / ".github" / "agents" / "retired" / "support.agent.md").exists()
+        assert not (
+            home / ".github" / "agents" / "retired" / "support.agent.md"
+        ).exists()
 
     def test_creates_project_agents(self, home: Path) -> None:
         env_extra = {"PROJECT_NAME": "myproj"}
@@ -287,14 +315,19 @@ class TestAmend:
         _run("amend", str(instr), "developer", "testproj", home=home)
         p = home / ".github" / "projects" / "testproj" / "agents"
         for i in (1, 2):
-            assert "## Instructions" in (
-                p / f"developer.testproj.{i}.agent.md"
-            ).read_text()
+            assert (
+                "## Instructions"
+                in (p / f"developer.testproj.{i}.agent.md").read_text()
+            )
 
     def test_conductor_blocked(self, home: Path, tmp_path: Path) -> None:
         instr = tmp_path / "i.md"
         instr.write_text("override.")
-        key = (home / "python" / "con-pilot" / "key").read_text().strip() if (home / "python" / "con-pilot" / "key").exists() else "anykey"
+        key = (
+            (home / "python" / "con-pilot" / "key").read_text().strip()
+            if (home / "python" / "con-pilot" / "key").exists()
+            else "anykey"
+        )
         r = _run("amend", str(instr), "conductor", "--key", key, home=home, check=False)
         assert r.returncode != 0
 
@@ -329,9 +362,7 @@ class TestReplace:
             [str(_BIN), "sync"], env=env, capture_output=True, text=True, check=True
         )
 
-    def test_replaces_body_keeps_frontmatter(
-        self, home: Path, tmp_path: Path
-    ) -> None:
+    def test_replaces_body_keeps_frontmatter(self, home: Path, tmp_path: Path) -> None:
         self._sync_proj(home)
         instr = tmp_path / "i.md"
         instr.write_text("## New Body\nAll new.")
@@ -395,9 +426,10 @@ class TestReset:
         _run("reset", "developer", "testproj", home=home)
         p = home / ".github" / "projects" / "testproj" / "agents"
         for i in (1, 2):
-            assert "## Instructions" not in (
-                p / f"developer.testproj.{i}.agent.md"
-            ).read_text()
+            assert (
+                "## Instructions"
+                not in (p / f"developer.testproj.{i}.agent.md").read_text()
+            )
 
     def test_uses_template(self, home: Path) -> None:
         self._sync_proj(home)
