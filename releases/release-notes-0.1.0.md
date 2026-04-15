@@ -57,7 +57,8 @@
 ### Installation
 - `./setup-0.1.0.sh install [CONDUCTOR_HOME]` — Full installation
 - `./setup-0.1.0.sh update` — Update existing installation
-- `./setup-0.1.0.sh uninstall` — Clean removal
+- `./setup-0.1.0.sh uninstall` — Clean removal (same effect as `uninstall.sh`)
+- `uninstall.sh` — Standalone uninstaller (same effect as `setup-0.1.0.sh uninstall`)
 - Environment variables persisted in `~/.bashrc`
 
 ### Cron Scheduling
@@ -118,11 +119,11 @@ task test
 
 | File | Description |
 |------|-------------|
-| `setup-0.1.0.sh` | Self-extracting installer (~23 MB) |
+| `setup-0.1.0.sh` | Self-extracting installer (~23 MB) with install/update/uninstall commands |
 | `conduct` | CLI wrapper script |
 | `conduct.bash-completion` | Bash tab completion |
 | `conductor.json` | Agent configuration |
-| `uninstall.sh` | Standalone uninstaller |
+| `uninstall.sh` | Standalone uninstaller (same effect as `setup-0.1.0.sh uninstall`) |
 
 ---
 
