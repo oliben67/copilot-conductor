@@ -1,6 +1,6 @@
 # Conductor
 
-> **A multi-agent orchestration framework for VS Code Copilot.**
+> **A multi-agent orchestration framework for [GitHub Copilot](https://github.com/features/copilot).**
 
 Conductor manages a fleet of AI agents defined in a single `conductor.json` file. It automatically creates, retires, and restores `.agent.md` files, dispatches scheduled cron tasks, and exposes every lifecycle operation through both a CLI (`conduct`) and an HTTP API (`con-pilot`).
 
@@ -192,7 +192,7 @@ flowchart LR
 
 ## Overview
 
-The **Conductor** system is a multi-agent framework built on top of VS Code Copilot. Each AI agent is defined as a `.agent.md` file under `.github/` — Copilot picks these up automatically and makes the named agent available in chat.
+The **Conductor** system is a multi-agent framework built on top of GitHub Copilot. Each AI agent is defined as a `.agent.md` file under `.github/` — Copilot picks these up automatically and makes the named agent available in chat.
 
 ```mermaid
 flowchart TD
@@ -293,7 +293,7 @@ graph TD
   "agent": {
     // ── System agent (lives in .github/agents/) ────────────────────────────
     "arbitrator": {
-      "name": "sir",                       // VS Code agent name
+      "name": "sir",                       // Copilot agent name
       "description": "Resolves conflicts …",
       "active": true,
       "model": "claude-opus-4.6",
@@ -326,7 +326,7 @@ graph TD
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | VS Code agent display name. Supports [placeholders](#agent-naming-templates). |
+| `name` | string | Copilot agent display name. Supports [placeholders](#agent-naming-templates). |
 | `description` | string | Shown as the agent's "Use when:" hint in Copilot. |
 | `active` | bool | When `false` the agent is retired and its file moved to `retired/`. |
 | `scope` | `"system"` \| `"project"` | System agents go to `.github/agents/`; project agents to `.github/projects/{name}/agents/`. |
@@ -814,3 +814,11 @@ tests/test_con_pilot.py::TestCli                  11 tests  — CLI dispatch for
 
 tests/test_cli_integration.py                      33 tests — end-to-end CLI via subprocess
 ```
+
+---
+
+## Trademarks
+
+[GitHub Copilot](https://github.com/features/copilot)®, [Copilot CLI](https://githubnext.com/projects/copilot-cli), and [Copilot SDK](https://docs.github.com/en/copilot/building-copilot-extensions/building-a-copilot-agent-for-your-copilot-extension/using-copilots-llm) are trademarks of GitHub, Inc. © GitHub, Inc. All rights reserved.
+
+This project is not affiliated with, endorsed by, or sponsored by GitHub, Inc.
