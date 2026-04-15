@@ -2,7 +2,9 @@
 
 **Release Date:** April 15, 2026
 
-> First public release of Conductor — a multi-agent orchestration framework for VS Code Copilot.
+> First public release of Conductor — a multi-agent orchestration framework for GitHub Copilot.
+
+*GitHub Copilot is a trademark of GitHub, Inc.*
 
 ---
 
