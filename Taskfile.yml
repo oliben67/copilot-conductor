@@ -1,7 +1,7 @@
 version: "3"
 
 vars:
-  CON_PILOT_DIR: "{{.ROOT_DIR}}/python/con-pilot"
+  CON_PILOT_DIR: "{{.ROOT_DIR}}/src/python/con-pilot"
   FLATPAK_DIR: "{{.CON_PILOT_DIR}}/flatpak"
   VENV: "{{.CON_PILOT_DIR}}/.venv"
   CON_PILOT: "{{.VENV}}/bin/con-pilot"
@@ -191,7 +191,7 @@ tasks:
   start:
     desc: Start con-pilot in production mode via Flatpak.
     cmds:
-      - "{{.ROOT_DIR}}/conduct start {{.CLI_ARGS}}"
+      - "{{.ROOT_DIR}}/src/conduct start {{.CLI_ARGS}}"
 
   # ── Deployment ──────────────────────────────────────────────────────────────
 
@@ -224,22 +224,22 @@ tasks:
   stop:
     desc: Stop the running con-pilot serve process.
     cmds:
-      - "{{.ROOT_DIR}}/conduct stop"
+      - "{{.ROOT_DIR}}/src/conduct stop"
 
   status:
     desc: Show whether con-pilot is running and which port it listens on.
     cmds:
-      - "{{.ROOT_DIR}}/conduct status"
+      - "{{.ROOT_DIR}}/src/conduct status"
 
   sync:
     desc: Trigger a one-shot sync cycle against the running service.
     cmds:
-      - "{{.ROOT_DIR}}/conduct sync"
+      - "{{.ROOT_DIR}}/src/conduct sync"
 
   logs:
     desc: Tail the sync_agents log.
     cmds:
-      - "{{.ROOT_DIR}}/conduct logs"
+      - "{{.ROOT_DIR}}/src/conduct logs"
 
   # ── Build (development only — stripped from setup.sh) ───────────────────────
 
@@ -464,10 +464,10 @@ tasks:
         STAGING="$(mktemp -d)"
         mkdir -p "$STAGING/conductor/python/con-pilot/dist"
 
-        cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
-        cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/conduct"              "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/conduct.bash-completion" "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
-        cp "{{.ROOT_DIR}}/uninstall.sh"         "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/uninstall.sh"         "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conductor.json"       "$STAGING/conductor/"
         cp "{{.CON_PILOT_DIR}}/dist/io.conductor.ConPilot.flatpak" "$STAGING/conductor/python/con-pilot/dist/"
 
@@ -481,7 +481,7 @@ tasks:
           -e "s|__VERSION__|${VERSION}|g" \
           -e "s|__CON_PILOT_VERSION__|${CP_VERSION}|g" \
           -e "s|__BUILD_DATE__|${BUILD_DATE}|g" \
-          "{{.ROOT_DIR}}/setup.sh.header" > "$SETUP"
+          "{{.ROOT_DIR}}/src/setup.sh.header" > "$SETUP"
         cat "$PAYLOAD" >> "$SETUP"
         chmod +x "$SETUP"
         rm -f "$PAYLOAD"
@@ -511,10 +511,10 @@ tasks:
         STAGING="$(mktemp -d)"
         mkdir -p "$STAGING/conductor/python/con-pilot/dist/offline"
 
-        cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
-        cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/conduct"              "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/conduct.bash-completion" "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
-        cp "{{.ROOT_DIR}}/uninstall.sh"         "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/uninstall.sh"         "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conductor.json"       "$STAGING/conductor/"
         cp "{{.CON_PILOT_DIR}}/dist/io.conductor.ConPilot.flatpak" "$STAGING/conductor/python/con-pilot/dist/"
         
@@ -533,7 +533,7 @@ tasks:
           -e "s|__BUILD_DATE__|${BUILD_DATE}|g" \
           -e "s|__RUNTIME_VERSION__|{{.RUNTIME_VERSION}}|g" \
           -e "s|__UV_VERSION__|{{.UV_VERSION}}|g" \
-          "{{.ROOT_DIR}}/setup.sh.header.full" > "$SETUP"
+          "{{.ROOT_DIR}}/src/setup.sh.header.full" > "$SETUP"
         cat "$PAYLOAD" >> "$SETUP"
         chmod +x "$SETUP"
         rm -f "$PAYLOAD"
@@ -559,7 +559,7 @@ tasks:
         # Generate release notes from template
         RELEASE_DATE="$(date '+%B %d, %Y')"
         NOTES_FILE="$RELEASES_DIR/release-notes-${VERSION}.md"
-        TEMPLATE="{{.ROOT_DIR}}/release-notes.template.md"
+        TEMPLATE="{{.ROOT_DIR}}/src/release-notes.template.md"
         
         sed -e "s/__VERSION__/${VERSION}/g" \
             -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \
@@ -590,7 +590,7 @@ tasks:
         # Generate release notes from template
         RELEASE_DATE="$(date '+%B %d, %Y')"
         NOTES_FILE="$RELEASES_DIR/release-notes-${VERSION}.md"
-        TEMPLATE="{{.ROOT_DIR}}/release-notes-full.template.md"
+        TEMPLATE="{{.ROOT_DIR}}/src/release-notes-full.template.md"
         
         sed -e "s/__VERSION__/${VERSION}/g" \
             -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \

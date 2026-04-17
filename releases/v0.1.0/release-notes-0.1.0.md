@@ -1,8 +1,8 @@
 # Conductor v0.1.0
 
-**Release Date:** April 15, 2026
+**Release Date:** April 17, 2026
 
-> First public release of Conductor — a multi-agent orchestration framework for GitHub Copilot.
+> Multi-agent orchestration framework for GitHub Copilot.
 
 *GitHub Copilot is a trademark of GitHub, Inc.*
 
@@ -10,7 +10,7 @@
 
 ## Highlights
 
-- **Self-extracting installer** — `setup-0.1.0.sh` bundles everything into a single ~23 MB file
+- **Self-extracting installer** — `setup-0.1.0.sh` bundles everything into a single file
 - **Flatpak packaging** — `con-pilot` runs sandboxed with Python 3.14 and uv-based bootstrap
 - **Full CLI** — the `conduct` command wraps all lifecycle operations
 - **HTTP API** — FastAPI-powered service for programmatic access
@@ -98,43 +98,6 @@ conduct status
 
 ---
 
-## Known Limitations
+## Changes in this Release
 
-- Linux only (macOS/Windows support planned)
-- Requires Flatpak runtime `org.freedesktop.Platform//24.08`
-- Single admin key per installation
-
----
-
-## Testing
-
-89 tests (56 unit + 33 CLI integration) passing:
-
-```bash
-cd python/con-pilot
-task test
-```
-
----
-
-## Files Included
-
-| File | Description |
-|------|-------------|
-| `setup-0.1.0.sh` | Self-extracting installer (~23 MB) with install/update/uninstall commands |
-| `conduct` | CLI wrapper script |
-| `conduct.bash-completion` | Bash tab completion |
-| `conductor.json` | Agent configuration |
-| `uninstall.sh` | Standalone uninstaller (same effect as `setup-0.1.0.sh uninstall`) |
-
----
-
-## Contributors
-
-- Initial development by the Conductor team
-
----
-
-## License
-
-MIT License — see [LICENSE](../LICENSE) for details.
+<!-- Add specific changes for this version here -->

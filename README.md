@@ -14,6 +14,7 @@ Conductor manages a fleet of AI agents defined in a single `conductor.json` file
   - [Quick start](#quick-start)
   - [Architecture](#architecture)
   - [Installation](#installation)
+  - [Building from source](#building-from-source)
   - [The `conduct` CLI](#the-conduct-cli)
   - [The `setup.sh` installer](#the-setupsh-installer)
   - [Overview](#overview)
@@ -126,11 +127,131 @@ On install, the admin key is displayed once and then erased. Save it — it's re
 
 ### From source (development)
 
+See the [Building from source](#building-from-source) section below for detailed instructions.
+
+---
+
+## Building from source
+
+### Prerequisites
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| [Task](https://taskfile.dev/) | v3+ | Task runner — orchestrates all build steps |
+| [Flatpak](https://flatpak.org/) | 1.12+ | Sandboxed application runtime |
+| [flatpak-builder](https://docs.flatpak.org/) | 1.2+ | Builds Flatpak applications |
+| [Python](https://python.org/) | 3.11+ | Runtime for con-pilot |
+| [uv](https://github.com/astral-sh/uv) | 0.10+ | Fast Python package manager |
+
+Install the Freedesktop runtime and SDK (required for Flatpak build):
+
 ```bash
-# Build the Flatpak + setup.sh
+flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak --user install flathub org.freedesktop.Platform//24.08
+flatpak --user install flathub org.freedesktop.Sdk//24.08
+```
+
+### Setting up the development environment
+
+```bash
+# Clone the repository
+git clone https://github.com/oliben67/copilot-conductor.git
+cd copilot-conductor
+
+# Create and activate the Python virtual environment
+cd python/con-pilot
+uv sync --all-groups
+source .venv/bin/activate
+cd ../..
+
+# Verify task is available
+task --version
+```
+
+### Build tasks
+
+| Task | Description |
+|------|-------------|
+| `task build` | Run tests → build Flatpak → package into `setup.sh` |
+| `task test` | Run the full pytest suite |
+| `task flatpak` | Full Flatpak pipeline: deps → build → bundle |
+| `task flatpak:force` | Clean all artifacts and rebuild from scratch |
+| `task flatpak:clean` | Remove build artifacts (keeps deps cache) |
+| `task flatpak:clean:all` | Remove all artifacts including deps cache |
+| `task build-all` | Build everything (supports `--force` and `--release` flags) |
+| `task release:package` | Package into self-extracting `setup.sh` |
+| `task release:package:full` | Package with offline dependencies |
+
+### Quick build
+
+```bash
+# Standard build (runs tests first)
 CONDUCTOR_HOME=$(pwd) task build
 
-# The installer is at dist/setup-{version}.sh
+# The installer is created at dist/setup-{version}.sh
+```
+
+### Full build with options
+
+```bash
+# Force a clean rebuild
+task build-all -- --force
+
+# Bump version and create a release package
+task build-all -- --release
+
+# Force rebuild AND create release
+task build-all -- --force --release
+```
+
+### Offline / air-gapped build
+
+For environments without internet access, build a full standalone bundle:
+
+```bash
+# Download offline dependencies (Platform, Sdk, uv)
+task flatpak:deps:offline
+
+# Build the full bundle with offline deps included
+task flatpak:bundle:full
+
+# Package into a self-extracting installer (~500+ MB)
+task release:package:full
+```
+
+The full bundle includes:
+- `org.freedesktop.Platform` runtime
+- `org.freedesktop.Sdk` SDK
+- `uv` binary for Python bootstrapping
+
+### Build outputs
+
+After a successful build:
+
+```
+dist/
+├── setup-{version}.sh              # Self-extracting installer (~23 MB)
+├── setup-{version}-full-bundle.sh  # Full offline installer (~500+ MB)
+└── io.conductor.ConPilot.flatpak   # Standalone Flatpak bundle
+
+python/con-pilot/
+├── flatpak/deps/                   # Downloaded wheel dependencies
+├── flatpak/build-dir/              # Flatpak build directory
+└── flatpak/repo/                   # Local Flatpak repository
+```
+
+### Testing
+
+```bash
+# Run all tests with verbose output
+task test -- -v
+
+# Run a specific test file
+task test -- tests/test_cli_integration.py -v
+
+# Run tests with coverage
+cd python/con-pilot
+python -m pytest tests/ -v --cov=con_pilot --cov-report=term-missing
 ```
 
 ---
