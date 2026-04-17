@@ -39,6 +39,7 @@
 - `conduct sync` — Trigger a manual sync cycle
 - `conduct logs` — Tail the sync log
 - `conduct agents` — List all agents with status
+- `conduct validate [file]` — Validate conductor.json against schema
 - `conduct register <name> <dir>` — Register a new project
 - `conduct retire <name>` — Retire a project
 - `conduct admin replace/reset` — Admin operations (require `--key`)
@@ -51,6 +52,7 @@
 - `/cron` — Execute due cron jobs
 - `/setup-env` — Export session environment
 - `/agents` — List all agents
+- `/validate` — Validate conductor.json against schema
 - `/register` — Register a project
 - `/retire-project` — Retire a project
 - `/replace` — Replace agent body (admin)

@@ -14,9 +14,9 @@ wheels/
 .flatpak-builder/
 
 # Flatpak repo (built by flatpak-builder)
-python/con-pilot/flatpak/repo/
-python/con-pilot/flatpak/build-dir/
-python/con-pilot/flatpak/deps/
+src/python/con-pilot/flatpak/repo/
+src/python/con-pilot/flatpak/build-dir/
+src/python/con-pilot/flatpak/deps/
 
 # Secrets
 key

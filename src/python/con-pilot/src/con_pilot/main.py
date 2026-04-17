@@ -11,6 +11,8 @@ Usage
   con-pilot retire-project NAME    Retire a project.
   con-pilot list-agents [-p PROJECT] [--json]
                                    List all agents and their status.
+  con-pilot validate [FILE] [--json]
+                                   Validate conductor.json against the schema.
   con-pilot replace FILE ROLE [PROJECT] [--key KEY]
                                    Replace agent body with instructions file.
   con-pilot reset ROLE [PROJECT] [--key KEY]
@@ -95,6 +97,23 @@ def main() -> None:
         help="Filter to a specific project for project-scoped agents.",
     )
     list_p.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON instead of human-readable format.",
+    )
+
+    validate_p = sub.add_parser(
+        "validate",
+        help="Validate conductor.json against the JSON schema.",
+    )
+    validate_p.add_argument(
+        "file",
+        nargs="?",
+        default=None,
+        metavar="FILE",
+        help="Path to config file to validate. Defaults to $CONDUCTOR_HOME/conductor.json.",
+    )
+    validate_p.add_argument(
         "--json",
         action="store_true",
         help="Output as JSON instead of human-readable format.",
@@ -195,6 +214,37 @@ def main() -> None:
                         print(f"        → {agent.file_path}")
             else:
                 print("\nNo project agents found.")
+    elif args.command == "validate":
+        result = pilot.validate(config_path=args.file)
+        if args.json:
+            import json  # noqa: PLC0415
+            print(json.dumps(result.model_dump(), indent=2))
+        else:
+            # Human-readable output
+            if result.valid:
+                print("✓ Configuration is valid")
+                if result.config_path:
+                    print(f"  Config: {result.config_path}")
+                if result.schema_path:
+                    print(f"  Schema: {result.schema_path}")
+            else:
+                print("✗ Configuration is invalid")
+                if result.config_path:
+                    print(f"  Config: {result.config_path}")
+                print()
+                print("Errors:")
+                for error in result.errors:
+                    print(f"  • {error.path}: {error.message}")
+
+            if result.warnings:
+                print()
+                print("Warnings:")
+                for warning in result.warnings:
+                    print(f"  ⚠ {warning}")
+
+            # Exit with error code if invalid
+            if not result.valid:
+                raise SystemExit(1)
     # amend disabled — pending implementation
     # elif args.command == "amend":
     #     pilot.amend_agent(args.file, args.role, args.project, args.key)

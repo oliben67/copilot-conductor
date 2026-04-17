@@ -191,7 +191,7 @@ tasks:
   start:
     desc: Start con-pilot in production mode via Flatpak.
     cmds:
-      - "{{.ROOT_DIR}}/src/conduct start {{.CLI_ARGS}}"
+      - "{{.ROOT_DIR}}/conduct start {{.CLI_ARGS}}"
 
   # ── Deployment ──────────────────────────────────────────────────────────────
 
@@ -224,22 +224,22 @@ tasks:
   stop:
     desc: Stop the running con-pilot serve process.
     cmds:
-      - "{{.ROOT_DIR}}/src/conduct stop"
+      - "{{.ROOT_DIR}}/conduct stop"
 
   status:
     desc: Show whether con-pilot is running and which port it listens on.
     cmds:
-      - "{{.ROOT_DIR}}/src/conduct status"
+      - "{{.ROOT_DIR}}/conduct status"
 
   sync:
     desc: Trigger a one-shot sync cycle against the running service.
     cmds:
-      - "{{.ROOT_DIR}}/src/conduct sync"
+      - "{{.ROOT_DIR}}/conduct sync"
 
   logs:
     desc: Tail the sync_agents log.
     cmds:
-      - "{{.ROOT_DIR}}/src/conduct logs"
+      - "{{.ROOT_DIR}}/conduct logs"
 
   # ── Build (development only — stripped from setup.sh) ───────────────────────
 
@@ -270,7 +270,7 @@ tasks:
         "{{.VENV}}/bin/pip" download
         -d flatpak/deps
         --only-binary=:all:
-        fastapi "uvicorn[standard]" croniter
+        fastapi "uvicorn[standard]" croniter jsonschema
     sources:
       - "{{.CON_PILOT_DIR}}/pyproject.toml"
     generates:
@@ -464,8 +464,8 @@ tasks:
         STAGING="$(mktemp -d)"
         mkdir -p "$STAGING/conductor/python/con-pilot/dist"
 
-        cp "{{.ROOT_DIR}}/src/conduct"              "$STAGING/conductor/"
-        cp "{{.ROOT_DIR}}/src/conduct.bash-completion" "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
         cp "{{.ROOT_DIR}}/src/uninstall.sh"         "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conductor.json"       "$STAGING/conductor/"
@@ -489,7 +489,7 @@ tasks:
         SIZE="$(du -h "$SETUP" | cut -f1)"
         echo "Created ${SETUP} (${SIZE})"
 
-  release:package:full:
+  release:package:deps-bundled:
     desc: Package full Flatpak bundle with offline dependencies into setup-VERSION-full-bundle.sh.
     cmds:
       - |
@@ -511,8 +511,8 @@ tasks:
         STAGING="$(mktemp -d)"
         mkdir -p "$STAGING/conductor/python/con-pilot/dist/offline"
 
-        cp "{{.ROOT_DIR}}/src/conduct"              "$STAGING/conductor/"
-        cp "{{.ROOT_DIR}}/src/conduct.bash-completion" "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
         cp "{{.ROOT_DIR}}/src/uninstall.sh"         "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conductor.json"       "$STAGING/conductor/"
@@ -576,7 +576,7 @@ tasks:
     cmds:
       - task: flatpak:bundle:full
       - task: release:package
-      - task: release:package:full
+      - task: release:package:deps-bundled
       - |
         set -e
         VERSION="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"

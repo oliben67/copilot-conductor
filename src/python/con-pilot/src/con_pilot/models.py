@@ -207,3 +207,21 @@ class AgentListResponse(BaseModel):
 
     system_agents: list[AgentInfo] = Field(default_factory=list, description="System-scoped agents.")
     project_agents: list[AgentInfo] = Field(default_factory=list, description="Project-scoped agents.")
+
+
+class ValidationError(BaseModel):
+    """A single validation error."""
+
+    path: str = Field(..., description="JSON path where the error occurred (e.g., '$.agent.conductor').")
+    message: str = Field(..., description="Human-readable description of the error.")
+    validator: str = Field(default="unknown", description="Name of the validator that failed.")
+
+
+class ValidationResult(BaseModel):
+    """Result of validating conductor.json against the schema."""
+
+    valid: bool = Field(..., description="Whether the configuration is valid.")
+    errors: list[ValidationError] = Field(default_factory=list, description="List of validation errors.")
+    warnings: list[str] = Field(default_factory=list, description="Non-fatal warnings.")
+    config_path: str | None = Field(default=None, description="Path to the validated config file.")
+    schema_path: str | None = Field(default=None, description="Path to the schema file used.")

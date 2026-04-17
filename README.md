@@ -51,7 +51,7 @@ Conductor manages a fleet of AI agents defined in a single `conductor.json` file
 - **Admin key security** — system agents protected by a UUID key; conductor agent permanently locked
 - **Cron scheduling** — TOML-based per-agent cron jobs dispatched automatically
 - **Project isolation** — trust boundaries enforced via `trust.json`; agents scoped per-project
-- **HTTP API** — FastAPI service with `/health`, `/sync`, `/cron`, `/setup-env`, `/register`, `/retire-project`, `/replace`, `/reset` endpoints
+- **HTTP API** — FastAPI service with `/health`, `/sync`, `/cron`, `/setup-env`, `/agents`, `/register`, `/retire-project`, `/validate`, `/replace`, `/reset` endpoints
 - **`conduct` CLI** — user-facing operational CLI wrapping Taskfile and the HTTP API
 - **89 tests** — 56 unit + 33 CLI integration tests, all isolated with `tmp_path` fixtures
 
@@ -180,7 +180,7 @@ task --version
 | `task flatpak:clean:all` | Remove all artifacts including deps cache |
 | `task build-all` | Build everything (supports `--force` and `--release` flags) |
 | `task release:package` | Package into self-extracting `setup.sh` |
-| `task release:package:full` | Package with offline dependencies |
+| `task release:package:deps-bundled` | Package with offline dependencies |
 
 ### Quick build
 
@@ -216,7 +216,7 @@ task flatpak:deps:offline
 task flatpak:bundle:full
 
 # Package into a self-extracting installer (~500+ MB)
-task release:package:full
+task release:package:deps-bundled
 ```
 
 The full bundle includes:
@@ -276,6 +276,9 @@ Service commands:
 
 Build commands:
   build [--force]      Build all Flatpak artefacts (--force = clean rebuild)
+
+Configuration commands:
+  validate [file]      Validate conductor.json against schema
 
 Project commands:
   register <name> <dir>   Register a new project
@@ -583,6 +586,7 @@ con-pilot serve [-i SECONDS]
 | `GET` | `/health` | Returns `{"status": "ok"}` |
 | `POST` | `/sync` | Trigger a manual sync cycle |
 | `POST` | `/cron` | Trigger a manual cron dispatch |
+| `GET` | `/validate` | Validate conductor.json against schema |
 
 ---
 

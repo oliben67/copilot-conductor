@@ -22,7 +22,13 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from con_pilot.models import AgentInfo, AgentListResponse, ConductorConfig
+from con_pilot.models import (
+    AgentInfo,
+    AgentListResponse,
+    ConductorConfig,
+    ValidationError,
+    ValidationResult,
+)
 
 try:
     from croniter import croniter
@@ -211,6 +217,141 @@ class ConPilot:
         """Discard the cached config and reload from disk."""
         self._cfg = None
         return self.config
+
+    @property
+    def schema_path(self) -> str:
+        """Return the path to the conductor.json schema file."""
+        # Check multiple locations for the schema
+        candidates = [
+            os.path.join(self.home, "src", "schemas", "conductor.schema.json"),
+            os.path.join(self.home, "schemas", "conductor.schema.json"),
+            os.path.join(Path(__file__).parents[4], "schemas", "conductor.schema.json"),
+        ]
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return candidate
+        return candidates[0]  # Return default even if not found
+
+    def validate(self, config_path: str | None = None) -> ValidationResult:
+        """
+        Validate conductor.json against the JSON schema.
+
+        Args:
+            config_path: Path to config file to validate. Defaults to self.config_path.
+
+        Returns:
+            ValidationResult with valid=True if valid, or list of errors if invalid.
+        """
+        import jsonschema  # noqa: PLC0415
+        from jsonschema import Draft202012Validator  # noqa: PLC0415
+
+        target_path = config_path or self.config_path
+        errors: list[ValidationError] = []
+        warnings: list[str] = []
+
+        # Check if config file exists
+        if not os.path.exists(target_path):
+            return ValidationResult(
+                valid=False,
+                errors=[ValidationError(
+                    path="$",
+                    message=f"Configuration file not found: {target_path}",
+                    validator="file_exists",
+                )],
+                config_path=target_path,
+                schema_path=None,
+            )
+
+        # Load config
+        try:
+            with open(target_path) as f:
+                config_data = json.load(f)
+        except json.JSONDecodeError as e:
+            return ValidationResult(
+                valid=False,
+                errors=[ValidationError(
+                    path="$",
+                    message=f"Invalid JSON: {e}",
+                    validator="json_parse",
+                )],
+                config_path=target_path,
+                schema_path=None,
+            )
+
+        # Load schema
+        schema_file = self.schema_path
+        if not os.path.exists(schema_file):
+            return ValidationResult(
+                valid=False,
+                errors=[ValidationError(
+                    path="$",
+                    message=f"Schema file not found: {schema_file}",
+                    validator="schema_exists",
+                )],
+                config_path=target_path,
+                schema_path=None,
+            )
+
+        try:
+            with open(schema_file) as f:
+                schema = json.load(f)
+        except json.JSONDecodeError as e:
+            return ValidationResult(
+                valid=False,
+                errors=[ValidationError(
+                    path="$",
+                    message=f"Invalid schema JSON: {e}",
+                    validator="schema_parse",
+                )],
+                config_path=target_path,
+                schema_path=schema_file,
+            )
+
+        # Validate against schema
+        validator = Draft202012Validator(schema)
+        for error in sorted(validator.iter_errors(config_data), key=lambda e: str(e.path)):
+            path = "$." + ".".join(str(p) for p in error.absolute_path) if error.absolute_path else "$"
+            errors.append(ValidationError(
+                path=path,
+                message=error.message,
+                validator=error.validator,
+            ))
+
+        # Additional semantic validations
+        if not errors:
+            # Check default_model is in authorized_models
+            models = config_data.get("models", {})
+            default = models.get("default_model")
+            authorized = models.get("authorized_models", [])
+            if default and default not in authorized:
+                warnings.append(
+                    f"default_model '{default}' is not in authorized_models list"
+                )
+
+            # Check for multiple sidekick agents
+            agents = config_data.get("agent", {})
+            sidekicks = [role for role, cfg in agents.items() if cfg.get("sidekick")]
+            if len(sidekicks) > 1:
+                warnings.append(
+                    f"Multiple agents marked as sidekick: {', '.join(sidekicks)}. "
+                    "Only one agent should have sidekick=true."
+                )
+
+            # Check agent model references
+            for role, cfg in agents.items():
+                model = cfg.get("model")
+                if model and model not in authorized:
+                    warnings.append(
+                        f"Agent '{role}' uses model '{model}' not in authorized_models"
+                    )
+
+        return ValidationResult(
+            valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings,
+            config_path=target_path,
+            schema_path=schema_file,
+        )
 
     @property
     def default_model(self) -> str:
@@ -1148,6 +1289,15 @@ class ConPilot:
                 body["role"], body.get("project"), body.get("key")
             )
             return {"status": "ok"}
+
+        @app.get("/validate")
+        def validate_route(config_path: str | None = None) -> ValidationResult:
+            return self.validate(config_path=config_path)
+
+        @app.post("/validate")
+        def validate_post_route(body: dict | None = None) -> ValidationResult:
+            config_path = body.get("config_path") if body else None
+            return self.validate(config_path=config_path)
 
         return app
 
