@@ -2,6 +2,7 @@ version: "3"
 
 vars:
   CON_PILOT_DIR: "{{.ROOT_DIR}}/python/con-pilot"
+  FLATPAK_DIR: "{{.CON_PILOT_DIR}}/flatpak"
   VENV: "{{.CON_PILOT_DIR}}/.venv"
   CON_PILOT: "{{.VENV}}/bin/con-pilot"
   PYTHON: "{{.VENV}}/bin/python"
@@ -9,6 +10,8 @@ vars:
   BUNDLE: "{{.CON_PILOT_DIR}}/dist/io.conductor.ConPilot.flatpak"
   KEY_FILE: "{{.CON_PILOT_DIR}}/key"
   BASHRC: "{{.HOME}}/.bashrc"
+  RUNTIME_VERSION: "24.08"
+  UV_VERSION: "0.10.12"
   VERSION:
     sh: cat "{{.ROOT_DIR}}/VERSION" | tr -d '[:space:]'
   CONDUCTOR_HOME:
@@ -273,6 +276,50 @@ tasks:
     generates:
       - "{{.CON_PILOT_DIR}}/flatpak/deps/*.whl"
 
+  flatpak:deps:offline:
+    desc: >
+      Export Flatpak runtimes and download uv tarball for fully offline installation.
+      Requires org.freedesktop.Platform and Sdk {{.RUNTIME_VERSION}} to be installed.
+    dir: "{{.CON_PILOT_DIR}}"
+    cmds:
+      - mkdir -p dist/offline
+      - |
+        echo "Exporting org.freedesktop.Platform//{{.RUNTIME_VERSION}}…"
+        if ! flatpak --user info org.freedesktop.Platform//{{.RUNTIME_VERSION}} &>/dev/null; then
+          echo "Installing runtime from flathub first…"
+          flatpak --user install -y flathub org.freedesktop.Platform//{{.RUNTIME_VERSION}}
+        fi
+        flatpak build-bundle \
+          --runtime \
+          ~/.local/share/flatpak/repo \
+          dist/offline/org.freedesktop.Platform-{{.RUNTIME_VERSION}}.flatpak \
+          org.freedesktop.Platform \
+          {{.RUNTIME_VERSION}}
+      - |
+        echo "Exporting org.freedesktop.Sdk//{{.RUNTIME_VERSION}}…"
+        if ! flatpak --user info org.freedesktop.Sdk//{{.RUNTIME_VERSION}} &>/dev/null; then
+          echo "Installing SDK from flathub first…"
+          flatpak --user install -y flathub org.freedesktop.Sdk//{{.RUNTIME_VERSION}}
+        fi
+        flatpak build-bundle \
+          --runtime \
+          ~/.local/share/flatpak/repo \
+          dist/offline/org.freedesktop.Sdk-{{.RUNTIME_VERSION}}.flatpak \
+          org.freedesktop.Sdk \
+          {{.RUNTIME_VERSION}}
+      - |
+        echo "Downloading uv v{{.UV_VERSION}}…"
+        curl -fsSL -o dist/offline/uv-{{.UV_VERSION}}-x86_64-unknown-linux-gnu.tar.gz \
+          "https://github.com/astral-sh/uv/releases/download/{{.UV_VERSION}}/uv-x86_64-unknown-linux-gnu.tar.gz"
+      - |
+        echo ""
+        echo "Offline dependencies exported to dist/offline/:"
+        ls -lh dist/offline/
+    generates:
+      - "{{.CON_PILOT_DIR}}/dist/offline/org.freedesktop.Platform-{{.RUNTIME_VERSION}}.flatpak"
+      - "{{.CON_PILOT_DIR}}/dist/offline/org.freedesktop.Sdk-{{.RUNTIME_VERSION}}.flatpak"
+      - "{{.CON_PILOT_DIR}}/dist/offline/uv-{{.UV_VERSION}}-x86_64-unknown-linux-gnu.tar.gz"
+
   flatpak:build:
     desc: Build the Flatpak app image using flatpak-builder.
     dir: "{{.CON_PILOT_DIR}}"
@@ -284,9 +331,9 @@ tasks:
         --force-clean
         --repo=flatpak/repo
         flatpak/build-dir
-        flatpak/io.conductor.ConPilot.yml
+        flatpak/{{.APP_ID}}.yml
     sources:
-      - "{{.CON_PILOT_DIR}}/flatpak/io.conductor.ConPilot.yml"
+      - "{{.CON_PILOT_DIR}}/flatpak/{{.APP_ID}}.yml"
       - "{{.CON_PILOT_DIR}}/flatpak/con-pilot-launcher.sh"
       - "{{.CON_PILOT_DIR}}/flatpak/deps/*.whl"
       - "{{.CON_PILOT_DIR}}/src/**/*.py"
@@ -302,17 +349,37 @@ tasks:
       - mkdir -p dist
       - flatpak build-bundle flatpak/repo dist/io.conductor.ConPilot.flatpak io.conductor.ConPilot
       - echo "Bundle written to dist/io.conductor.ConPilot.flatpak"
-
+  
+  flatpak:bundle:full:
+    desc: Full standalone Flatpak build with offline dependencies - includes runtime bundles.
+    dir: "{{.CON_PILOT_DIR}}"
+    cmds:
+      - task: flatpak:deps
+      - task: flatpak:deps:offline
+      - "{{.PYTHON}} -c \"import uuid; open('key', 'w').write(str(uuid.uuid4()))\""
+      - echo "Generated new admin key at $(pwd)/key"
+      - rm -rf flatpak/build-dir flatpak/repo
+      - mkdir -p flatpak/build-dir flatpak/repo dist
+      - >-
+        flatpak-builder
+        --force-clean
+        --repo=flatpak/repo
+        flatpak/build-dir
+        flatpak/{{.APP_ID}}.yml
+      - flatpak build-bundle flatpak/repo dist/{{.APP_ID}}.flatpak {{.APP_ID}}
+      - echo "Full bundle written to dist/{{.APP_ID}}.flatpak"
+      - echo "Offline deps available in dist/offline/"
+  
   flatpak:run:
     desc: Run the installed Flatpak (pass extra args via CLI_ARGS).
     cmds:
-      - flatpak run --env=CONDUCTOR_HOME={{.CONDUCTOR_HOME}} io.conductor.ConPilot {{.CLI_ARGS}}
+      - flatpak run --env=CONDUCTOR_HOME={{.CONDUCTOR_HOME}} {{.APP_ID}} {{.CLI_ARGS}}
 
   flatpak:clean:
     desc: Remove Flatpak build artefacts (keeps downloaded deps cache).
     dir: "{{.CON_PILOT_DIR}}"
     cmds:
-      - rm -rf flatpak/build-dir flatpak/repo dist/io.conductor.ConPilot.flatpak
+      - rm -rf flatpak/build-dir flatpak/repo dist/{{.APP_ID}}.flatpak
 
   flatpak:clean:all:
     desc: Remove all Flatpak artefacts including the deps wheel cache.
@@ -419,10 +486,119 @@ tasks:
         chmod +x "$SETUP"
         rm -f "$PAYLOAD"
 
-        # Convenience symlink
-        ln -sf "setup-${VERSION}.sh" "${DIST_DIR}/setup.sh"
+        SIZE="$(du -h "$SETUP" | cut -f1)"
+        echo "Created ${SETUP} (${SIZE})"
+
+  release:package:full:
+    desc: Package full Flatpak bundle with offline dependencies into setup-VERSION-full-bundle.sh.
+    cmds:
+      - |
+        set -e
+        VERSION="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
+        BUILD_DATE="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+        DIST_DIR="{{.ROOT_DIR}}/dist"
+        mkdir -p "$DIST_DIR"
+
+        echo "Packaging Conductor v${VERSION} (full offline bundle)…"
+
+        # Strip "Running the tests" section from README for deployment
+        DEPLOY_README="$(mktemp)"
+        sed '/^## Running the tests/,$d' "{{.ROOT_DIR}}/README.md" > "$DEPLOY_README"
+        sed -i '${/^---$/d;}' "$DEPLOY_README"
+
+        # Create payload tarball with essential files AND offline dependencies
+        PAYLOAD="$(mktemp)"
+        STAGING="$(mktemp -d)"
+        mkdir -p "$STAGING/conductor/python/con-pilot/dist/offline"
+
+        cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
+        cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
+        cp "{{.ROOT_DIR}}/uninstall.sh"         "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/conductor.json"       "$STAGING/conductor/"
+        cp "{{.CON_PILOT_DIR}}/dist/io.conductor.ConPilot.flatpak" "$STAGING/conductor/python/con-pilot/dist/"
+        
+        # Include offline dependencies (Platform, Sdk, uv)
+        cp "{{.CON_PILOT_DIR}}/dist/offline/"* "$STAGING/conductor/python/con-pilot/dist/offline/"
+
+        tar czf "$PAYLOAD" -C "$STAGING" conductor
+        rm -rf "$STAGING" "$DEPLOY_README"
+
+        # Build setup.sh = header.full (with substitutions) + archive payload
+        SETUP="${DIST_DIR}/setup-${VERSION}-full-bundle.sh"
+        CP_VERSION=$(grep -m1 '^version' '{{.CON_PILOT_DIR}}/pyproject.toml' | sed 's/.*"\(.*\)"/\1/')
+        sed \
+          -e "s|__VERSION__|${VERSION}|g" \
+          -e "s|__CON_PILOT_VERSION__|${CP_VERSION}|g" \
+          -e "s|__BUILD_DATE__|${BUILD_DATE}|g" \
+          -e "s|__RUNTIME_VERSION__|{{.RUNTIME_VERSION}}|g" \
+          -e "s|__UV_VERSION__|{{.UV_VERSION}}|g" \
+          "{{.ROOT_DIR}}/setup.sh.header.full" > "$SETUP"
+        cat "$PAYLOAD" >> "$SETUP"
+        chmod +x "$SETUP"
+        rm -f "$PAYLOAD"
 
         SIZE="$(du -h "$SETUP" | cut -f1)"
         echo "Created ${SETUP} (${SIZE})"
-        echo "Symlink: ${DIST_DIR}/setup.sh → setup-${VERSION}.sh"
+        echo "Includes offline dependencies: Platform, Sdk, uv"
+
+  release:
+    desc: "Build setup file, create releases/v[version]/ directory, and generate release notes."
+    cmds:
+      - task: flatpak:bundle
+      - task: release:package
+      - |
+        set -e
+        VERSION="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
+        RELEASES_DIR="{{.ROOT_DIR}}/releases/v${VERSION}"
+        mkdir -p "$RELEASES_DIR"
+        
+        # Copy setup file to versioned releases folder
+        cp "{{.ROOT_DIR}}/dist/setup-${VERSION}.sh" "$RELEASES_DIR/"
+        
+        # Generate release notes from template
+        RELEASE_DATE="$(date '+%B %d, %Y')"
+        NOTES_FILE="$RELEASES_DIR/release-notes-${VERSION}.md"
+        TEMPLATE="{{.ROOT_DIR}}/release-notes.template.md"
+        
+        sed -e "s/__VERSION__/${VERSION}/g" \
+            -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \
+            "$TEMPLATE" > "$NOTES_FILE"
+        
+        echo ""
+        echo "Release v${VERSION} artifacts saved to releases/v${VERSION}/:"
+        ls -lh "$RELEASES_DIR/"
+        echo ""
+        echo "NOTE: Edit $NOTES_FILE to add version-specific changes."
+
+  release-all:
+    desc: "Build both standard and full-bundle setup files, create releases/v[version]/ directory, and generate release notes."
+    cmds:
+      - task: flatpak:bundle:full
+      - task: release:package
+      - task: release:package:full
+      - |
+        set -e
+        VERSION="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
+        RELEASES_DIR="{{.ROOT_DIR}}/releases/v${VERSION}"
+        mkdir -p "$RELEASES_DIR"
+        
+        # Copy both setup files to versioned releases folder
+        cp "{{.ROOT_DIR}}/dist/setup-${VERSION}.sh" "$RELEASES_DIR/"
+        cp "{{.ROOT_DIR}}/dist/setup-${VERSION}-full-bundle.sh" "$RELEASES_DIR/"
+        
+        # Generate release notes from template
+        RELEASE_DATE="$(date '+%B %d, %Y')"
+        NOTES_FILE="$RELEASES_DIR/release-notes-${VERSION}.md"
+        TEMPLATE="{{.ROOT_DIR}}/release-notes-full.template.md"
+        
+        sed -e "s/__VERSION__/${VERSION}/g" \
+            -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \
+            "$TEMPLATE" > "$NOTES_FILE"
+        
+        echo ""
+        echo "Release v${VERSION} artifacts saved to releases/v${VERSION}/:"
+        ls -lh "$RELEASES_DIR/"
+        echo ""
+        echo "NOTE: Edit $NOTES_FILE to add version-specific changes."
 
