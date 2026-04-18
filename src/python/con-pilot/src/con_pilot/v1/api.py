@@ -19,6 +19,7 @@ from con_pilot.v1.endpoints import (
     config_router,
     health_router,
     projects_router,
+    snapshot_router,
     sync_router,
     validation_router,
 )
@@ -36,6 +37,7 @@ router = APIRouter()
 router.include_router(health_router)
 router.include_router(agents_router)
 router.include_router(config_router)
+router.include_router(snapshot_router)
 router.include_router(sync_router)
 router.include_router(projects_router)
 router.include_router(validation_router)
@@ -97,6 +99,18 @@ def create_app(pilot: "ConPilot", interval: int | None = None) -> FastAPI:
         except Exception as e:
             log.warning("Failed to backup active config: %s", e)
 
+        # Initialize snapshot service and load index
+        pilot.snapshot_service.ensure_instructions_dir()
+        pilot.snapshot_service._load_index()
+        log.info(
+            "Loaded %d snapshots from %s",
+            len(pilot.snapshot_service.versions),
+            pilot.snapshot_service.instructions_dir,
+        )
+
+        # Start snapshot watcher (check for changes every 60 seconds)
+        pilot.snapshot_service.start_watcher(interval=60)
+
         pilot._ensure_system_agents()
 
         def _loop() -> None:
@@ -112,6 +126,9 @@ def create_app(pilot: "ConPilot", interval: int | None = None) -> FastAPI:
         t.start()
         log.info("con-pilot background sync started (interval=%ds)", cycle)
         yield
+
+        # Cleanup: stop snapshot watcher
+        pilot.snapshot_service.stop_watcher()
 
     app = FastAPI(title="con-pilot", lifespan=lifespan)
     app.include_router(router)

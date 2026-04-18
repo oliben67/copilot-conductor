@@ -1,5 +1,5 @@
 version:
-  number: "1.0.0-initial"
+  number: "1.0.0"
   description: Initial YAML configuration with cron and version support
   date: "2026-04-18T10:36:10+02:00"
   notes: Migrated from JSON format, added CronConfig and VersionConfig models

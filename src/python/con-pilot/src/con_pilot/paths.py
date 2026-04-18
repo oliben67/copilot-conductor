@@ -81,6 +81,11 @@ class PathResolver:
         return os.path.join(self.home, ".github")
 
     @property
+    def instructions_dir(self) -> str:
+        """Path to .instructions directory for snapshots and backups."""
+        return os.path.join(self.home, ".instructions")
+
+    @property
     def trust_file(self) -> str:
         """Path to .github/trust.json."""
         return os.path.join(self.github_dir, "trust.json")

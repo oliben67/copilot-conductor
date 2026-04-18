@@ -74,16 +74,23 @@ class ConPilot:
 
     def __init__(self, conductor_home: str | None = None) -> None:
         from con_pilot.core.services.config_store import ConfigStore  # noqa: PLC0415
+        from con_pilot.core.services.snapshot import SnapshotService  # noqa: PLC0415
 
         self._paths = PathResolver(conductor_home)
         self._trust = TrustRegistry(self._paths)
         self._cfg: ConductorConfig | None = None
         self._config_store = ConfigStore(self._paths)
+        self._snapshot_service = SnapshotService(self._paths)
 
     @property
     def config_store(self):
         """ConfigStore for managing configuration versions."""
         return self._config_store
+
+    @property
+    def snapshot_service(self):
+        """SnapshotService for managing .github directory snapshots."""
+        return self._snapshot_service
 
     @property
     def home(self) -> str:
