@@ -16,7 +16,6 @@ import threading
 import time
 from datetime import UTC, datetime
 from fnmatch import fnmatch
-from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 

@@ -18,17 +18,59 @@ usage() {
 Conductor Setup v${VERSION}  (con-pilot v${CON_PILOT_VERSION})
 
 Usage:
-  ./$0 install   [CONDUCTOR_HOME]   Extract and install Conductor
-  ./$0 update                        Update to this version (v${VERSION})
-  ./$0 version                       Show bundled version
-  ./$0 help                          Show this help message
+  ./$0 install   [CONDUCTOR_HOME] [GITHUB_TOKEN]   Extract and install Conductor
+  ./$0 update                                       Update to this version (v${VERSION})
+  ./$0 version                                      Show bundled version
+  ./$0 help                                         Show this help message
 
 Arguments:
   CONDUCTOR_HOME   Target directory (uses \$CONDUCTOR_HOME if set)
+  GITHUB_TOKEN     GitHub token (optional if COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN is set)
+
+Environment:
+  COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN — Checked in order for GitHub access
 EOF
 }
 
 # ── Preflight checks ──────────────────────────────────────────────────────────
+
+resolve_github_token() {
+  # Check for existing token env vars in priority order
+  local token="${COPILOT_GITHUB_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
+  if [[ -n "$token" ]]; then
+    echo "$token"
+    return 0
+  fi
+  return 1
+}
+
+require_github_token() {
+  local provided_token="${1:-}"
+  local resolved_token
+
+  if resolved_token=$(resolve_github_token); then
+    echo "Using GitHub token from environment."
+    export COPILOT_GITHUB_TOKEN="$resolved_token"
+    return 0
+  fi
+
+  if [[ -n "$provided_token" ]]; then
+    echo "Using provided GitHub token."
+    export COPILOT_GITHUB_TOKEN="$provided_token"
+    return 0
+  fi
+
+  echo "Error: GitHub token is required for installation." >&2
+  echo "" >&2
+  echo "Provide a token via:" >&2
+  echo "  1. Command line:  ./setup.sh install CONDUCTOR_HOME GITHUB_TOKEN" >&2
+  echo "  2. Environment:   export COPILOT_GITHUB_TOKEN=<token>" >&2
+  echo "                    export GH_TOKEN=<token>" >&2
+  echo "                    export GITHUB_TOKEN=<token>" >&2
+  echo "" >&2
+  echo "Generate a token at: https://github.com/settings/tokens" >&2
+  exit 1
+}
 
 require_flatpak() {
   if ! command -v flatpak >/dev/null 2>&1; then
@@ -94,10 +136,12 @@ install_flatpak() {
 
   local host="${CON_PILOT_HOST:-localhost}"
   local port="${CON_PILOT_PORT:-8000}"
+  local token="${COPILOT_GITHUB_TOKEN:-}"
   flatpak --user override \
     --env=CONDUCTOR_HOME="$conductor_home" \
     --env=CON_PILOT_HOST="$host" \
     --env=CON_PILOT_PORT="$port" \
+    --env=COPILOT_GITHUB_TOKEN="$token" \
     "$APP_ID"
   echo "Forwarded env vars into the Flatpak sandbox."
 }
@@ -160,6 +204,7 @@ show_key() {
 cmd_install() {
   require_flatpak
   local conductor_home="${1:-}"
+  local github_token="${2:-}"
 
   # If no argument provided, check if CONDUCTOR_HOME is already set
   if [[ -z "$conductor_home" ]]; then
@@ -175,10 +220,13 @@ cmd_install() {
       esac
     else
       echo "Error: CONDUCTOR_HOME is required." >&2
-      echo "Usage: ./setup.sh install CONDUCTOR_HOME" >&2
+      echo "Usage: ./setup.sh install CONDUCTOR_HOME [GITHUB_TOKEN]" >&2
       exit 1
     fi
   fi
+
+  # Require GitHub token (from env or argument)
+  require_github_token "$github_token"
 
   echo "Installing Conductor v${VERSION} to ${conductor_home}…"
 
@@ -188,6 +236,7 @@ cmd_install() {
   persist_var CONDUCTOR_HOME "$conductor_home"
   persist_var CON_PILOT_HOST "${CON_PILOT_HOST:-localhost}"
   persist_var CON_PILOT_PORT "${CON_PILOT_PORT:-8000}"
+  persist_var COPILOT_GITHUB_TOKEN "$COPILOT_GITHUB_TOKEN"
   
   # Install bash completion
   local completion_dir="$HOME/.local/share/bash-completion/completions"

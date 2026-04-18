@@ -66,11 +66,6 @@ class PathResolver:
         return yaml_path
 
     @property
-    def config_json_path(self) -> str:
-        """Path to conductor.json (for backward compatibility checks)."""
-        return os.path.join(self.home, "conductor.json")
-
-    @property
     def config_yaml_path(self) -> str:
         """Path to conductor.yaml."""
         return os.path.join(self.home, "conductor.yaml")
@@ -130,11 +125,6 @@ class PathResolver:
     def projects_dir(self) -> str:
         """Path to .github/projects directory."""
         return os.path.join(self.github_dir, "projects")
-
-    @property
-    def retired_projects_dir(self) -> str:
-        """Path to .github/retired-projects directory."""
-        return os.path.join(self.github_dir, "retired-projects")
 
     def project_dir(self, project: str) -> str:
         """Path to .github/projects/<project> directory."""
@@ -201,6 +191,3 @@ class PathResolver:
             if os.path.exists(candidate):
                 return candidate
         return candidates[0]  # Return default even if not found
-
-        # Return the expected path even if not found (caller handles missing)
-        return schema_in_home

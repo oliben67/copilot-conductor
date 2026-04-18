@@ -60,37 +60,6 @@ class TrustRegistry:
             json.dump(trust, f, indent=2)
         self._update_env(trust)
 
-    def unregister(self, name: str) -> None:
-        """
-        Remove a project entry from .github/trust.json.
-
-        The "conductor" entry cannot be removed.
-        """
-        if name == "conductor":
-            log.warning("Cannot unregister the conductor entry")
-            return
-        trust = self.load()
-        if name not in trust:
-            return
-        del trust[name]
-        with open(self._paths.trust_file, "w") as f:
-            json.dump(trust, f, indent=2)
-        self._update_env(trust)
-
-    def get_directory(self, name: str) -> str | None:
-        """Return the directory for a registered project, or None if not found."""
-        return self.load().get(name)
-
-    def list_projects(self) -> list[str]:
-        """Return a list of registered project names (excluding 'conductor')."""
-        trust = self.load()
-        return [name for name in trust if name != "conductor"]
-
-    def trusted_directories(self) -> list[str]:
-        """Return a deduplicated list of all trusted directories."""
-        trust = self.load()
-        return list(dict.fromkeys(trust.values()))
-
     def _update_env(self, trust: dict[str, str]) -> None:
         """Update TRUSTED_DIRECTORIES environment variable."""
         dirs = list(dict.fromkeys(trust.values()))

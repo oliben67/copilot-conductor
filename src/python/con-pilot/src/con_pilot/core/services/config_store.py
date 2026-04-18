@@ -182,13 +182,6 @@ class ConfigStore:
         """List all stored versions with metadata."""
         return self.load_index().versions
 
-    def get_version_meta(self, version: str) -> ConfigVersion | None:
-        """Get metadata for a specific version."""
-        for v in self.versions:
-            if v.version == version:
-                return v
-        return None
-
     # ── Storage Operations ─────────────────────────────────────────────────────
 
     def save(

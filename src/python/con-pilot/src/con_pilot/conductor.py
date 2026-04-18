@@ -24,6 +24,11 @@ from pathlib import Path
 
 import yaml
 
+from con_pilot.auth import (
+    GitHubToken,
+    resolve_github_token,
+)
+from con_pilot.exceptions import TokenConflictError, TokenNotFoundError
 from con_pilot.models import (
     AgentInfo,
     AgentListResponse,
@@ -72,9 +77,12 @@ class ConPilot:
 
     DEFAULT_INTERVAL: int = 15 * 60  # seconds (900)
 
-    def __init__(self, conductor_home: str | None = None) -> None:
+    def __init__(self, conductor_home: str | None = None, *, require_token: bool = True) -> None:
         from con_pilot.core.services.config_store import ConfigStore  # noqa: PLC0415
         from con_pilot.core.services.snapshot import SnapshotService  # noqa: PLC0415
+
+        # Validate GitHub token first — fail fast if conflicting or missing
+        self._token: GitHubToken | None = resolve_github_token(required=require_token)
 
         self._paths = PathResolver(conductor_home)
         self._trust = TrustRegistry(self._paths)
@@ -91,6 +99,11 @@ class ConPilot:
     def snapshot_service(self):
         """SnapshotService for managing .github directory snapshots."""
         return self._snapshot_service
+
+    @property
+    def github_token(self) -> GitHubToken | None:
+        """Resolved GitHub token (from COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN)."""
+        return self._token
 
     @property
     def home(self) -> str:
@@ -228,7 +241,6 @@ class ConPilot:
         Returns:
             ValidationResult with valid=True if valid, or list of errors if invalid.
         """
-        import jsonschema  # noqa: PLC0415
         from jsonschema import Draft202012Validator  # noqa: PLC0415
 
         target_path = config_path or self.config_path
@@ -505,8 +517,8 @@ class ConPilot:
         if self.default_model:
             result["COPILOT_DEFAULT_MODEL"] = self.default_model
         if conductor_name is None or conductor_name.strip() == "":
-            raise 
-            log.warning("Agent names cannot be empty. Check your conductor.json configuration.")    
+            log.warning("Agent names cannot be empty. Check your conductor.json configuration.")
+            conductor_name = "conductor"  # fallback to default
         result["CONDUCTOR_AGENT_NAME"] = conductor_name
         result["SIDEKICK_AGENT_NAME"] = sidekick_name
         return result
