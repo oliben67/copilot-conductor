@@ -24,14 +24,15 @@ _CONFIG = {
             "name": "uppity",
             "active": True,
             "scope": "system",
-            "has_cron_jobs": True,
+            "cron": {"expression": "*/15 * * * *"},
         },
         "support": {
             "name": "dogsbody",
             "description": "Support agent.",
             "active": True,
             "scope": "system",
-            "has_cron_jobs": True,
+            "cron": {"expression": "*/30 * * * *"},
+            "augmenting": True,
         },
         "arbitrator": {
             "name": "sir",

@@ -142,11 +142,6 @@
           "type": "string",
           "description": "Optional model override. Falls back to models.default_model if absent."
         },
-        "augmenting": {
-          "type": "boolean",
-          "description": "If true, this agent augments the base copilot functionality rather than operating as a standalone agent.",
-          "default": false
-        },
         "cron": {
           "$ref": "#/$defs/cronConfig"
         },

@@ -12,10 +12,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from con_pilot.conductor import ConPilot
 from con_pilot.main import main
-from con_pilot.models import ConductorConfig
+from con_pilot.models import ConductorConfig, CronConfig
 
 # ── Minimal conductor.json shared across all tests ───────────────────────────
 
@@ -28,6 +29,7 @@ _CONFIG = {
             "description": "Support agent.",
             "active": True,
             "scope": "system",
+            "augmenting": True,
         },
         "developer": {
             "name": "code-monkey-[scope:project]-agent-[rank]",
@@ -75,6 +77,36 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture()
 def pilot(home: Path) -> ConPilot:
     return ConPilot(str(home))
+
+
+# ── CronConfig ───────────────────────────────────────────────────────────────
+
+
+class TestCronConfig:
+    def test_valid_daily_expression(self) -> None:
+        cron = CronConfig(expression="0 9 * * *")
+        assert cron.expression == "0 9 * * *"
+        assert cron.file is None
+
+    def test_valid_every_15_minutes(self) -> None:
+        cron = CronConfig(expression="*/15 * * * *")
+        assert cron.expression == "*/15 * * * *"
+
+    def test_valid_weekly_expression(self) -> None:
+        cron = CronConfig(expression="0 0 * * 0")
+        assert cron.expression == "0 0 * * 0"
+
+    def test_with_custom_file(self) -> None:
+        cron = CronConfig(expression="0 9 * * *", file="custom.cron")
+        assert cron.file == "custom.cron"
+
+    def test_invalid_expression_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid cron expression"):
+            CronConfig(expression="invalid")
+
+    def test_invalid_expression_too_few_fields(self) -> None:
+        with pytest.raises(ValueError, match="Invalid cron expression"):
+            CronConfig(expression="0 9 *")
 
 
 # ── _expand_name ─────────────────────────────────────────────────────────────
@@ -199,6 +231,13 @@ class TestListAgents:
         assert conductor.scope == "system"
         assert conductor.active is True
 
+    def test_augmenting_flag_returned(self, pilot: ConPilot, home: Path) -> None:
+        result = pilot.list_agents()
+        support = next(a for a in result.system_agents if a.role == "support")
+        assert support.augmenting is True
+        conductor = next(a for a in result.system_agents if a.role == "conductor")
+        assert conductor.augmenting is False
+
 
 # ── sync ─────────────────────────────────────────────────────────────────────
 
@@ -294,7 +333,7 @@ class TestCron:
                     "name": "dogsbody",
                     "active": True,
                     "scope": "system",
-                    "has_cron_jobs": True,
+                    "cron": {"expression": "0 9 * * *"},
                 },
             },
         })
@@ -310,7 +349,7 @@ class TestCron:
                     "name": "dogsbody",
                     "active": False,
                     "scope": "system",
-                    "has_cron_jobs": True,
+                    "cron": {"expression": "0 9 * * *"},
                 },
             },
         })
@@ -722,3 +761,112 @@ class TestCli:
         with patch("con_pilot.conductor.ConPilot.reset_agent") as mock:
             main()
         mock.assert_called_once_with("support", None, "mykey")
+
+
+# ── YAML Config Support ──────────────────────────────────────────────────────
+
+
+class TestYamlConfig:
+    """Tests for YAML configuration file support."""
+
+    def test_loads_yaml_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that conductor.yaml is loaded correctly."""
+        (tmp_path / "conductor.yaml").write_text(yaml.dump(_CONFIG))
+        agents = tmp_path / ".github" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "conductor.agent.md").write_text('---\nname: "uppity"\n---\n')
+        (agents / "retired").mkdir()
+        (tmp_path / ".github" / "trust.json").write_text(
+            json.dumps({"conductor": str(tmp_path)}, indent=2)
+        )
+        monkeypatch.setenv("CONDUCTOR_HOME", str(tmp_path))
+
+        pilot = ConPilot(str(tmp_path))
+        assert pilot.config.models.default_model == "test-model"
+        assert "conductor" in pilot.config.agents
+
+    def test_prefers_yaml_over_json(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that conductor.yaml is preferred over conductor.json."""
+        # Write JSON with one model
+        json_config = {**_CONFIG, "models": {**_CONFIG["models"], "default_model": "json-model"}}
+        (tmp_path / "conductor.json").write_text(json.dumps(json_config, indent=2))
+
+        # Write YAML with different model
+        yaml_config = {**_CONFIG, "models": {**_CONFIG["models"], "default_model": "yaml-model"}}
+        (tmp_path / "conductor.yaml").write_text(yaml.dump(yaml_config))
+
+        agents = tmp_path / ".github" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "conductor.agent.md").write_text('---\nname: "uppity"\n---\n')
+        (agents / "retired").mkdir()
+        (tmp_path / ".github" / "trust.json").write_text(
+            json.dumps({"conductor": str(tmp_path)}, indent=2)
+        )
+        monkeypatch.setenv("CONDUCTOR_HOME", str(tmp_path))
+
+        pilot = ConPilot(str(tmp_path))
+        # Should use YAML config, not JSON
+        assert pilot.config.models.default_model == "yaml-model"
+
+    def test_falls_back_to_json(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that conductor.json is used when no YAML exists."""
+        (tmp_path / "conductor.json").write_text(json.dumps(_CONFIG, indent=2))
+        agents = tmp_path / ".github" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "conductor.agent.md").write_text('---\nname: "uppity"\n---\n')
+        (agents / "retired").mkdir()
+        (tmp_path / ".github" / "trust.json").write_text(
+            json.dumps({"conductor": str(tmp_path)}, indent=2)
+        )
+        monkeypatch.setenv("CONDUCTOR_HOME", str(tmp_path))
+
+        pilot = ConPilot(str(tmp_path))
+        assert pilot.config.models.default_model == "test-model"
+
+    def test_config_path_returns_yaml_when_exists(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that config_path returns .yaml path when it exists."""
+        (tmp_path / "conductor.yaml").write_text(yaml.dump(_CONFIG))
+        monkeypatch.setenv("CONDUCTOR_HOME", str(tmp_path))
+
+        pilot = ConPilot(str(tmp_path))
+        assert pilot.config_path.endswith("conductor.yaml")
+
+    def test_config_path_returns_json_when_no_yaml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that config_path returns .json path when no .yaml exists."""
+        (tmp_path / "conductor.json").write_text(json.dumps(_CONFIG, indent=2))
+        monkeypatch.setenv("CONDUCTOR_HOME", str(tmp_path))
+
+        pilot = ConPilot(str(tmp_path))
+        assert pilot.config_path.endswith("conductor.json")
+
+    def test_validate_yaml_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that validate() works with YAML config files."""
+        (tmp_path / "conductor.yaml").write_text(yaml.dump(_CONFIG))
+        # Create schema directory and file
+        schema_dir = tmp_path / "src" / "schemas"
+        schema_dir.mkdir(parents=True)
+        # Copy minimal valid schema
+        schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "models": {"type": "object"},
+                "agent": {"type": "object"},
+            },
+        }
+        (schema_dir / "conductor.schema.json").write_text(json.dumps(schema))
+        monkeypatch.setenv("CONDUCTOR_HOME", str(tmp_path))
+
+        pilot = ConPilot(str(tmp_path))
+        result = pilot.validate()
+        assert result.valid is True

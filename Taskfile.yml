@@ -3,7 +3,7 @@ version: "3"
 vars:
   CON_PILOT_DIR: "{{.ROOT_DIR}}/src/python/con-pilot"
   FLATPAK_DIR: "{{.CON_PILOT_DIR}}/flatpak"
-  VENV: "{{.CON_PILOT_DIR}}/.venv"
+  VENV: "{{.ROOT_DIR}}/src/python/.venv"
   CON_PILOT: "{{.VENV}}/bin/con-pilot"
   PYTHON: "{{.VENV}}/bin/python"
   APP_ID: io.conductor.ConPilot
@@ -23,6 +23,7 @@ vars:
 
 env:
   CONDUCTOR_HOME: "{{.CONDUCTOR_HOME}}"
+  UV_PROJECT_ENVIRONMENT: "{{.VENV}}"
 
 tasks:
   # ── Install / Uninstall ─────────────────────────────────────────────────────

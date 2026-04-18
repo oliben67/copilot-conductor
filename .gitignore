@@ -25,6 +25,9 @@ key
 .pytest_cache/
 .ruff_cache/
 
+# Sandbox / scratch notebooks
+.sandbox/
+
 # Runtime state
 .github/agents/cron/.state/
 .github/agents/cron/pending.log

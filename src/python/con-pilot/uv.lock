@@ -369,12 +369,13 @@ wheels = [
 
 [[package]]
 name = "con-pilot"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "croniter" },
     { name = "fastapi" },
     { name = "jsonschema" },
+    { name = "pyyaml" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -389,6 +390,7 @@ requires-dist = [
     { name = "croniter", specifier = ">=3.0" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "jsonschema", specifier = ">=4.20" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
 

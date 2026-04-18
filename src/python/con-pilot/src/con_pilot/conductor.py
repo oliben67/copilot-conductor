@@ -22,6 +22,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+import yaml
+
 from con_pilot.models import (
     AgentInfo,
     AgentListResponse,
@@ -29,6 +31,8 @@ from con_pilot.models import (
     ValidationError,
     ValidationResult,
 )
+from con_pilot.paths import PathResolver
+from con_pilot.trust import TrustRegistry
 
 try:
     from croniter import croniter
@@ -69,75 +73,60 @@ class ConPilot:
     DEFAULT_INTERVAL: int = 15 * 60  # seconds (900)
 
     def __init__(self, conductor_home: str | None = None) -> None:
-        self.home: str = self._resolve_home(conductor_home)
+        from con_pilot.core.services.config_store import ConfigStore  # noqa: PLC0415
+
+        self._paths = PathResolver(conductor_home)
+        self._trust = TrustRegistry(self._paths)
         self._cfg: ConductorConfig | None = None
+        self._config_store = ConfigStore(self._paths)
 
-    # ── Bootstrap ──────────────────────────────────────────────────────────────
+    @property
+    def config_store(self):
+        """ConfigStore for managing configuration versions."""
+        return self._config_store
 
-    @staticmethod
-    def _resolve_home(conductor_home: str | None = None) -> str:
-        """
-        Resolve CONDUCTOR_HOME and write it into ``os.environ``.
+    @property
+    def home(self) -> str:
+        """CONDUCTOR_HOME directory (delegated to PathResolver)."""
+        return self._paths.home
 
-        Priority: explicit arg → ``CONDUCTOR_HOME`` env var → self-location
-        (this file lives at ``$CONDUCTOR_HOME/python/con-pilot/src/con_pilot/``).
-        """
-        home = conductor_home or os.environ.get("CONDUCTOR_HOME", "")
-        if not home:
-            candidate = Path(__file__).parents[4]
-            if (candidate / "conductor.json").exists():
-                home = str(candidate)
-        if home:
-            os.environ["CONDUCTOR_HOME"] = home
-        return home
-
-    # ── Paths (derived from self.home) ─────────────────────────────────────────
+    # ── Paths (delegated to PathResolver) ──────────────────────────────────────
 
     @property
     def config_path(self) -> str:
-        return os.path.join(self.home, "conductor.json")
+        return self._paths.config_path
 
     @property
     def agents_dir(self) -> str:
-        return os.path.join(self.home, ".github", "agents")
+        return self._paths.agents_dir
 
     @property
     def retired_dir(self) -> str:
-        return os.path.join(self.agents_dir, "retired")
+        return self._paths.retired_dir
 
     @property
     def cron_dir(self) -> str:
-        return os.path.join(self.agents_dir, "cron")
+        return self._paths.cron_dir
 
     @property
     def cron_state_dir(self) -> str:
-        return os.path.join(self.cron_dir, ".state")
+        return self._paths.cron_state_dir
 
     @property
     def pending_log(self) -> str:
-        return os.path.join(self.cron_dir, "pending.log")
+        return self._paths.pending_log
 
     @property
     def templates_dir(self) -> str:
-        return os.path.join(self.agents_dir, "templates")
+        return self._paths.templates_dir
 
     @property
     def trust_file(self) -> str:
-        return os.path.join(self.home, ".github", "trust.json")
+        return self._paths.trust_file
 
     @property
     def key_file(self) -> str:
-        # Prefer XDG_DATA_HOME (flatpak sandbox) for new installs
-        xdg_data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
-        flatpak_key = os.path.join(xdg_data, "key")
-        if os.path.exists(flatpak_key):
-            return flatpak_key
-        # Fall back to legacy location
-        legacy_key = os.path.join(self.home, "python", "con-pilot", "key")
-        if os.path.exists(legacy_key):
-            return legacy_key
-        # Default to flatpak location for new keys
-        return flatpak_key
+        return self._paths.key_file
 
     def _load_or_generate_key(self) -> str:
         """Return the system key, generating and persisting a new GUID on first call."""
@@ -154,43 +143,29 @@ class ConPilot:
         log.info("Generated new system key: %s", self.key_file)
         return key
 
+    # ── Trust (delegated to TrustRegistry) ─────────────────────────────────────
+
     def _load_trust(self) -> dict[str, str]:
         """Return the trust map from .github/trust.json, always including conductor."""
-        trust: dict[str, str] = {"conductor": self.home}
-        if os.path.exists(self.trust_file):
-            try:
-                with open(self.trust_file) as f:
-                    trust.update(json.load(f))
-            except Exception:
-                pass
-        # Ensure conductor entry is always correct
-        trust["conductor"] = self.home
-        return trust
+        return self._trust.load()
 
     def _register_project_trust(self, name: str, directory: str) -> None:
         """Add or update a project entry in .github/trust.json and re-export TRUSTED_DIRECTORIES."""
-        trust = self._load_trust()
-        if trust.get(name) == directory:
-            return
-        trust[name] = directory
-        os.makedirs(os.path.dirname(self.trust_file), exist_ok=True)
-        with open(self.trust_file, "w") as f:
-            json.dump(trust, f, indent=2)
-        # Update the running env so callers see the new list immediately
-        dirs = list(dict.fromkeys(trust.values()))  # preserve insertion order, deduplicate
-        os.environ["TRUSTED_DIRECTORIES"] = ":".join(dirs)
+        self._trust.register(name, directory)
+
+    # ── Project paths (delegated to PathResolver) ──────────────────────────────
 
     def project_dir(self, project: str) -> str:
-        return os.path.join(self.home, ".github", "projects", project)
+        return self._paths.project_dir(project)
 
     def project_agents_dir(self, project: str) -> str:
-        return os.path.join(self.project_dir(project), "agents")
+        return self._paths.project_agents_dir(project)
 
     def project_retired_dir(self, project: str) -> str:
-        return os.path.join(self.project_agents_dir(project), "retired")
+        return self._paths.project_retired_dir(project)
 
     def project_cron_dir(self, project: str) -> str:
-        return os.path.join(self.project_dir(project), "cron")
+        return self._paths.project_cron_dir(project)
 
     def _role_cron_root(self, role: str, project: str | None = None) -> str:
         """Return the cron directory for a role: project-scoped or system-level."""
@@ -201,16 +176,28 @@ class ConPilot:
 
     @property
     def sync_log(self) -> str:
-        return os.path.join(self.home, ".github", "scripts", "sync_agents.log")
+        return self._paths.sync_log
 
     # ── Config ─────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _load_config_file(path: str) -> dict:
+        """
+        Load config from path, detecting format by extension.
+
+        Supports both YAML (.yaml, .yml) and JSON (.json) files.
+        """
+        with open(path) as f:
+            if path.endswith((".yaml", ".yml")):
+                return yaml.safe_load(f)
+            return json.load(f)
+
     @property
     def config(self) -> ConductorConfig:
-        """Return conductor.json as a dict (lazy-loaded, cached per instance)."""
+        """Return conductor config (lazy-loaded, cached per instance)."""
         if self._cfg is None:
-            with open(self.config_path) as f:
-                self._cfg = ConductorConfig(**json.load(f))
+            data = self._load_config_file(self.config_path)
+            self._cfg = ConductorConfig(**data)
         return self._cfg
 
     def reload_config(self) -> ConductorConfig:
@@ -221,23 +208,15 @@ class ConPilot:
     @property
     def schema_path(self) -> str:
         """Return the path to the conductor.json schema file."""
-        # Check multiple locations for the schema
-        candidates = [
-            os.path.join(self.home, "src", "schemas", "conductor.schema.json"),
-            os.path.join(self.home, "schemas", "conductor.schema.json"),
-            os.path.join(Path(__file__).parents[4], "schemas", "conductor.schema.json"),
-        ]
-        for candidate in candidates:
-            if os.path.exists(candidate):
-                return candidate
-        return candidates[0]  # Return default even if not found
+        return self._paths.schema_path
 
     def validate(self, config_path: str | None = None) -> ValidationResult:
         """
-        Validate conductor.json against the JSON schema.
+        Validate conductor config against the JSON schema.
 
         Args:
             config_path: Path to config file to validate. Defaults to self.config_path.
+                         Supports both YAML (.yaml, .yml) and JSON (.json) files.
 
         Returns:
             ValidationResult with valid=True if valid, or list of errors if invalid.
@@ -262,10 +241,20 @@ class ConPilot:
                 schema_path=None,
             )
 
-        # Load config
+        # Load config (supports YAML and JSON)
         try:
-            with open(target_path) as f:
-                config_data = json.load(f)
+            config_data = self._load_config_file(target_path)
+        except yaml.YAMLError as e:
+            return ValidationResult(
+                valid=False,
+                errors=[ValidationError(
+                    path="$",
+                    message=f"Invalid YAML: {e}",
+                    validator="yaml_parse",
+                )],
+                config_path=target_path,
+                schema_path=None,
+            )
         except json.JSONDecodeError as e:
             return ValidationResult(
                 valid=False,
@@ -404,6 +393,7 @@ class ConPilot:
                     file_exists=exists,
                     file_path=fpath if exists else None,
                     sidekick=agent_cfg.sidekick,
+                    augmenting=agent_cfg.augmenting,
                     model=agent_cfg.model,
                     description=agent_cfg.description,
                 ))
@@ -434,6 +424,7 @@ class ConPilot:
                                 project=proj,
                                 instance=i,
                                 sidekick=agent_cfg.sidekick,
+                                augmenting=agent_cfg.augmenting,
                                 model=agent_cfg.model,
                                 description=agent_cfg.description,
                             ))
@@ -454,6 +445,7 @@ class ConPilot:
                             file_path=fpath if exists else None,
                             project=proj,
                             sidekick=agent_cfg.sidekick,
+                            augmenting=agent_cfg.augmenting,
                             model=agent_cfg.model,
                             description=agent_cfg.description,
                         ))
@@ -505,6 +497,9 @@ class ConPilot:
             result["TRUSTED_DIRECTORIES"] = ":".join(dirs)
         if self.default_model:
             result["COPILOT_DEFAULT_MODEL"] = self.default_model
+        if conductor_name is None or conductor_name.strip() == "":
+            raise 
+            log.warning("Agent names cannot be empty. Check your conductor.json configuration.")    
         result["CONDUCTOR_AGENT_NAME"] = conductor_name
         result["SIDEKICK_AGENT_NAME"] = sidekick_name
         return result
@@ -1151,13 +1146,14 @@ class ConPilot:
             )
 
     def cron(self, project: str | None = None) -> None:
-        """Check all agents with has_cron_jobs=true and queue any due tasks."""
+        """Check all agents with cron config and queue any due tasks."""
         # Ensure system cron dirs exist
         os.makedirs(self.cron_dir, exist_ok=True)
         os.makedirs(self.cron_state_dir, exist_ok=True)
 
         for role, role_cfg in self.config.agent_dicts.items():
-            if not role_cfg.get("has_cron_jobs", False):
+            cron_cfg_raw = role_cfg.get("cron")
+            if not cron_cfg_raw:
                 continue
             if not role_cfg.get("active", role == "conductor"):
                 continue
@@ -1204,102 +1200,11 @@ class ConPilot:
         """
         Build and return the FastAPI application.
 
-        Starts a background thread that calls ``self.sync()`` on every cycle.
+        Delegates to the v1 API module which handles routers and lifespan.
         """
-        from fastapi import FastAPI  # noqa: PLC0415
+        from con_pilot.v1.api import create_app as _create_app  # noqa: PLC0415
 
-        cycle = interval if interval is not None else self.DEFAULT_INTERVAL
-
-        @asynccontextmanager
-        async def lifespan(app: FastAPI):
-            self._ensure_system_agents()
-
-            def _loop() -> None:
-                while True:
-                    try:
-                        self.sync()
-                    except Exception:
-                        log.exception("Sync cycle failed")
-                    log.info("Next sync in %ds", cycle)
-                    time.sleep(cycle)
-
-            t = threading.Thread(target=_loop, daemon=True)
-            t.start()
-            log.info("con-pilot background sync started (interval=%ds)", cycle)
-            yield
-
-        app = FastAPI(title="con-pilot", lifespan=lifespan)
-
-        @app.get("/health")
-        def health() -> dict:
-            return {"status": "ok"}
-
-        @app.get("/agents")
-        def list_agents_route(project: str | None = None) -> AgentListResponse:
-            return self.list_agents(project=project)
-
-        @app.post("/sync")
-        def sync_route() -> dict:
-            self.sync()
-            return {"status": "ok"}
-
-        @app.post("/cron")
-        def cron_route() -> dict:
-            self.cron()
-            return {"status": "ok"}
-
-        @app.get("/setup-env")
-        def setup_env_route() -> dict:
-            result = self.resolve_project()
-            if result:
-                os.environ["PROJECT_NAME"] = result[0]
-            env = dict(self.env)
-            if result:
-                env["PROJECT_NAME"] = result[0]
-            return env
-
-        @app.post("/register")
-        def register_route(body: dict) -> dict:
-            self.register(body["name"], body["directory"])
-            return {"status": "ok"}
-
-        @app.post("/retire-project")
-        def retire_project_route(body: dict) -> dict:
-            self.retire_project(body["name"])
-            return {"status": "ok"}
-
-        # amend route disabled — pending implementation
-        # @app.post("/amend")
-        # def amend_route(body: dict) -> dict:
-        #     self.amend_agent(
-        #         body["file"], body["role"], body.get("project"), body.get("key")
-        #     )
-        #     return {"status": "ok"}
-
-        @app.post("/replace")
-        def replace_route(body: dict) -> dict:
-            self.replace_agent(
-                body["file"], body["role"], body.get("project"), body.get("key")
-            )
-            return {"status": "ok"}
-
-        @app.post("/reset")
-        def reset_route(body: dict) -> dict:
-            self.reset_agent(
-                body["role"], body.get("project"), body.get("key")
-            )
-            return {"status": "ok"}
-
-        @app.get("/validate")
-        def validate_route(config_path: str | None = None) -> ValidationResult:
-            return self.validate(config_path=config_path)
-
-        @app.post("/validate")
-        def validate_post_route(body: dict | None = None) -> ValidationResult:
-            config_path = body.get("config_path") if body else None
-            return self.validate(config_path=config_path)
-
-        return app
+        return _create_app(self, interval=interval)
 
     def serve(self, interval: int | None = None) -> None:
         """Start the con-pilot FastAPI service via uvicorn."""
