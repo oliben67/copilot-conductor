@@ -25,6 +25,9 @@ key
 .pytest_cache/
 .ruff_cache/
 
+# IDE
+.vscode/
+
 # Sandbox / scratch notebooks
 .sandbox/
 
