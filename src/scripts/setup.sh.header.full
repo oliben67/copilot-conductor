@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+# ── Conductor Self-Extracting Installer (Full Offline Bundle) ─────────────────
+# Version: __VERSION__
+# Built:   __BUILD_DATE__
+# Usage:   ./setup.sh install | update
+#
+# This is the FULL BUNDLE version which includes:
+#   - org.freedesktop.Platform 24.08
+#   - org.freedesktop.Sdk 24.08
+#   - uv tarball
+# No network connection required for installation.
+set -euo pipefail
+
+VERSION="__VERSION__"
+CON_PILOT_VERSION="__CON_PILOT_VERSION__"
+APP_ID="io.conductor.ConPilot"
+RUNTIME_VERSION="__RUNTIME_VERSION__"
+UV_VERSION="__UV_VERSION__"
+BASHRC="$HOME/.bashrc"
+DEFAULT_HOME="$HOME/.conductor"
+
+# ── Usage ─────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+Conductor Setup v${VERSION} (Full Offline Bundle)
+con-pilot v${CON_PILOT_VERSION}
+
+This is the FULL BUNDLE version - no network required.
+
+Usage:
+  ./$0 install   [CONDUCTOR_HOME]   Extract and install Conductor
+  ./$0 update                        Update to this version (v${VERSION})
+  ./$0 version                       Show bundled version
+  ./$0 help                          Show this help message
+
+Arguments:
+  CONDUCTOR_HOME   Target directory (uses \$CONDUCTOR_HOME if set)
+
+Bundled Dependencies:
+  - org.freedesktop.Platform/${RUNTIME_VERSION}
+  - org.freedesktop.Sdk/${RUNTIME_VERSION}
+  - uv v${UV_VERSION}
+EOF
+}
+
+# ── Shared functions ─────────────────────────────────────────────────────────
+
+# __FUNCTIONS__
+
+# ── Offline runtime helpers ───────────────────────────────────────────────────
+
+install_runtime_from_bundle() {
+  local conductor_home="$1"
+  local offline_dir="${conductor_home}/python/con-pilot/dist/offline"
+  local platform_bundle="${offline_dir}/org.freedesktop.Platform-${RUNTIME_VERSION}.flatpak"
+  local sdk_bundle="${offline_dir}/org.freedesktop.Sdk-${RUNTIME_VERSION}.flatpak"
+
+  # Install Platform runtime if not present
+  if ! flatpak --user info "org.freedesktop.Platform//${RUNTIME_VERSION}" &>/dev/null; then
+    if [[ -f "$platform_bundle" ]]; then
+      echo "Installing org.freedesktop.Platform/${RUNTIME_VERSION} from local bundle…"
+      flatpak --user install --noninteractive "$platform_bundle"
+    else
+      echo "Error: Platform runtime bundle not found at ${platform_bundle}" >&2
+      echo "This full bundle should contain the runtime. The bundle may be corrupted." >&2
+      exit 1
+    fi
+  else
+    echo "org.freedesktop.Platform/${RUNTIME_VERSION} is already installed."
+  fi
+
+  # Install Sdk if not present (optional, for development)
+  if ! flatpak --user info "org.freedesktop.Sdk//${RUNTIME_VERSION}" &>/dev/null; then
+    if [[ -f "$sdk_bundle" ]]; then
+      echo "Installing org.freedesktop.Sdk/${RUNTIME_VERSION} from local bundle…"
+      flatpak --user install --noninteractive "$sdk_bundle"
+    else
+      echo "Warning: SDK bundle not found at ${sdk_bundle} (optional for runtime)." >&2
+    fi
+  else
+    echo "org.freedesktop.Sdk/${RUNTIME_VERSION} is already installed."
+  fi
+}
+
+install_flatpak() {
+  local conductor_home="$1" force="${2:-false}"
+  local bundle="${conductor_home}/python/con-pilot/dist/io.conductor.ConPilot.flatpak"
+
+  if [[ ! -f "$bundle" ]]; then
+    echo "Error: Flatpak bundle not found at ${bundle}" >&2
+    exit 1
+  fi
+
+  # Install runtime from bundled files (offline)
+  install_runtime_from_bundle "$conductor_home"
+
+  if flatpak --user info "$APP_ID" &>/dev/null; then
+    if [[ "$force" == true ]]; then
+      echo "Removing existing Flatpak…"
+      flatpak --user uninstall -y "$APP_ID" 2>/dev/null || true
+      rm -rf "$HOME/.var/app/${APP_ID}"
+    else
+      echo "con-pilot Flatpak is already installed. Use 'update' to upgrade."
+      return 0
+    fi
+  fi
+
+  echo "Installing Flatpak from ${bundle}…"
+  flatpak --user install --noninteractive "$bundle"
+
+  local host="${CON_PILOT_HOST:-localhost}"
+  local port="${CON_PILOT_PORT:-8000}"
+  flatpak --user override \
+    --env=CONDUCTOR_HOME="$conductor_home" \
+    --env=CON_PILOT_HOST="$host" \
+    --env=CON_PILOT_PORT="$port" \
+    "$APP_ID"
+  echo "Forwarded env vars into the Flatpak sandbox."
+}
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+cmd_install() {
+  require_flatpak
+  local conductor_home="${1:-}"
+
+  # If no argument provided, check if CONDUCTOR_HOME is already set
+  if [[ -z "$conductor_home" ]]; then
+    if [[ -n "${CONDUCTOR_HOME:-}" ]]; then
+      echo "CONDUCTOR_HOME is already set to: ${CONDUCTOR_HOME}"
+      read -r -p "Install to this location? [Y/n] " answer
+      case "${answer:-Y}" in
+        [Yy]*|"") conductor_home="$CONDUCTOR_HOME" ;;
+        *)
+          echo "Aborted."
+          exit 0
+          ;;
+      esac
+    else
+      echo "Error: CONDUCTOR_HOME is required." >&2
+      echo "Usage: ./setup.sh install CONDUCTOR_HOME" >&2
+      exit 1
+    fi
+  fi
+
+  echo "Installing Conductor v${VERSION} (Full Offline Bundle) to ${conductor_home}…"
+
+  extract_to "$conductor_home"
+  echo "Extracted to ${conductor_home}."
+  grep -q '# Conductor' "$BASHRC" 2>/dev/null || printf '\n# Conductor\n' >> "$BASHRC"
+  persist_var CONDUCTOR_HOME "$conductor_home"
+  persist_var CON_PILOT_HOST "${CON_PILOT_HOST:-localhost}"
+  persist_var CON_PILOT_PORT "${CON_PILOT_PORT:-8000}"
+
+  # Install bash completion
+  local completion_dir="$HOME/.local/share/bash-completion/completions"
+  mkdir -p "$completion_dir"
+  if [[ -f "${conductor_home}/conduct.bash-completion" ]]; then
+    cp "${conductor_home}/conduct.bash-completion" "$completion_dir/conduct"
+    echo "Bash completion installed to ${completion_dir}/conduct"
+  fi
+  # Also add to PATH if not already there
+  if ! grep -q "PATH=.*${conductor_home}" "$BASHRC" 2>/dev/null; then
+    echo "export PATH=\"\$PATH:${conductor_home}\"" >> "$BASHRC"
+  fi
+
+  echo "Environment variables persisted in ${BASHRC}."
+
+  install_flatpak "$conductor_home" false
+  start_and_healthcheck
+  show_key
+
+  # Clean up: leave only conduct, README.md, uninstall.sh, conduct.bash-completion
+  rm -rf "${conductor_home}/python"
+  echo "Cleaned up installation files."
+
+  echo ""
+  echo "Conductor v${VERSION} installed successfully (Full Offline Bundle)."
+  echo "Run:  source ${BASHRC}"
+}
+
+cmd_update() {
+  require_flatpak
+  local conductor_home="${CONDUCTOR_HOME:-}"
+  if [[ -z "$conductor_home" ]]; then
+    echo "Error: CONDUCTOR_HOME is not set. Run 'source ~/.bashrc' or install first." >&2
+    exit 1
+  fi
+
+  echo "Updating Conductor to v${VERSION} (Full Offline Bundle)…"
+
+  # Stop server before update
+  if pgrep -f 'con-pilot serve' >/dev/null 2>&1; then
+    pkill -f 'con-pilot serve' || true
+    echo "Stopped running con-pilot serve."
+  fi
+
+  extract_to "$conductor_home"
+  echo "Extracted v${VERSION} to ${conductor_home}."
+
+  # Update bash completion
+  local completion_dir="$HOME/.local/share/bash-completion/completions"
+  mkdir -p "$completion_dir"
+  if [[ -f "${conductor_home}/conduct.bash-completion" ]]; then
+    cp "${conductor_home}/conduct.bash-completion" "$completion_dir/conduct"
+    echo "Bash completion updated."
+  fi
+
+  install_flatpak "$conductor_home" true
+  start_and_healthcheck
+  show_key
+
+  # Clean up: leave only conduct, README.md, uninstall.sh, conduct.bash-completion
+  rm -rf "${conductor_home}/python"
+  echo "Cleaned up installation files."
+
+  echo ""
+  echo "Conductor updated to v${VERSION} (Full Offline Bundle)."
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 0
+fi
+
+case "$1" in
+  install)   shift; cmd_install "$@" ;;
+  update)    cmd_update ;;
+  version)   echo "Conductor v${VERSION} (Full Offline Bundle)  (con-pilot v${CON_PILOT_VERSION})" ;;
+  help|--help|-h) usage ;;
+  *)
+    echo "Unknown command: $1" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
+exit 0
+__ARCHIVE__

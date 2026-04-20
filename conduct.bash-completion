@@ -5,7 +5,7 @@ _conduct_completions() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="start stop status sync logs agents register retire admin help"
+    local commands="start stop status sync logs agents register retire admin version help"
     local admin_commands="replace reset help"
 
     case "${cword}" in
@@ -97,6 +97,15 @@ _conduct_completions() {
                                     esac
                                     ;;
                             esac
+                            ;;
+                    esac
+                    ;;
+                logs)
+                    # conduct logs [-n LINES] [-f | --follow]
+                    case "${prev}" in
+                        -n) ;;
+                        *)
+                            COMPREPLY=($(compgen -W "-n -f --follow" -- "${cur}"))
                             ;;
                     esac
                     ;;

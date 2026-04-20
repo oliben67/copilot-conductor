@@ -6,18 +6,21 @@ CON_PILOT_HOST="${CON_PILOT_HOST:-localhost}"
 CON_PILOT_PORT="${CON_PILOT_PORT:-8000}"
 BASE_URL="http://${CON_PILOT_HOST}:${CON_PILOT_PORT}"
 
-# Get version from service or fall back to unknown
+# Lazy-load version from service (with 2s timeout) or fall back to unknown
+_VERSION_CACHE=""
 get_version() {
-  curl -sf "${BASE_URL}/version" 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo 'unknown'
+  if [[ -z "$_VERSION_CACHE" ]]; then
+    _VERSION_CACHE="$(curl -sf --connect-timeout 2 --max-time 2 "${BASE_URL}/version" 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo 'unknown')"
+  fi
+  echo "$_VERSION_CACHE"
 }
-CONDUCTOR_VERSION="$(get_version)"
-CON_PILOT_VERSION="$CONDUCTOR_VERSION"
 
 # ── Usage ─────────────────────────────────────────────────────────────────────
 
 usage() {
+  local v; v="$(get_version)"
   cat <<EOF
-conduct — Conductor v${CONDUCTOR_VERSION}  (con-pilot v${CON_PILOT_VERSION})
+conduct — Conductor v${v}  (con-pilot v${v})
 
 Usage:
   conduct <command> [options]
@@ -27,7 +30,7 @@ Service commands:
   stop                       Stop the con-pilot service
   status                     Show whether con-pilot is running
   sync                       Trigger a one-shot sync cycle
-  logs                       Tail the sync_agents log
+  logs [-n N] [-f]           Show service logs (last 10 lines; -f to follow)
   agents [-p PROJECT] [-j]   List all agents (-j for JSON)
 
 Project commands:
@@ -39,6 +42,7 @@ Admin commands (require --key):
   admin reset   <role> [project]        --key KEY   Reset agent(s) to defaults
 
 General:
+  version                    Show version information
   help                       Show this help message
 EOF
 }
@@ -108,14 +112,14 @@ EOF
 
 usage_status() {
   cat <<EOF
-conduct status — Show whether con-pilot is running
+conduct status — Show service health and version
 
 Usage:
   conduct status
 
 Description:
-  Displays the current status of the con-pilot service, including
-  the process ID if running and any listening ports.
+  Queries the con-pilot service for its health and version and prints
+  a summary. Exits non-zero when the service is unreachable.
 
 Options:
   --help, -h    Show this help message
@@ -149,16 +153,18 @@ EOF
 
 usage_logs() {
   cat <<EOF
-conduct logs — Tail the sync_agents log
+conduct logs — Show con-pilot service logs
 
 Usage:
-  conduct logs
+  conduct logs [-n LINES] [-f | --follow]
 
 Description:
-  Follows the sync_agents.log file in real-time, displaying new entries
-  as they are written. Press Ctrl+C to stop.
+  Prints the last N lines of the con-pilot service log (default: 10).
+  Use -f or --follow to stream live output until interrupted (Ctrl+C).
 
 Options:
+  -n LINES      Number of lines to show (default: 10)
+  -f, --follow  Follow the log in real-time
   --help, -h    Show this help message
 
 Environment:
@@ -167,8 +173,10 @@ Environment:
 Log location:
   \$CONDUCTOR_HOME/.github/scripts/sync_agents.log
 
-Example:
+Examples:
   conduct logs
+  conduct logs -n 50
+  conduct logs -f
 EOF
 }
 
@@ -315,14 +323,19 @@ cmd_status() {
       -h|--help) usage_status; exit 0 ;;
     esac
   done
-  local PIDS
-  PIDS=$(pgrep -f 'con-pilot serve' || true)
-  if [ -n "$PIDS" ]; then
-    echo "con-pilot is running (PID $PIDS)"
-    ss -tlnp 2>/dev/null | grep -E ':(8[0-9]{3})\b' || true
-  else
-    echo "con-pilot is NOT running."
+  local health version
+  health=$(curl -sf --connect-timeout 2 --max-time 2 "${BASE_URL}/health" 2>/dev/null) || true
+  version=$(curl -sf --connect-timeout 2 --max-time 2 "${BASE_URL}/version" 2>/dev/null) || true
+  if [[ -z "$health" ]]; then
+    echo "con-pilot is NOT running (no response from ${BASE_URL})."
+    exit 1
   fi
+  local status_val version_val
+  status_val=$(printf '%s' "$health"  | sed 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+  version_val=$(printf '%s' "$version" | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+  echo "Status:  ${status_val:-unknown}"
+  echo "Version: ${version_val:-unknown}"
+  echo "URL:     ${BASE_URL}"
 }
 
 cmd_sync() {
@@ -337,14 +350,27 @@ cmd_sync() {
 }
 
 cmd_logs() {
-  # Handle --help
-  for arg in "$@"; do
-    case "$arg" in
+  local follow=false lines=10
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
       -h|--help) usage_logs; exit 0 ;;
+      -f|--follow) follow=true; shift ;;
+      -n) lines="$2"; shift 2 ;;
+      *) echo "Unknown option: $1" >&2; usage_logs >&2; exit 1 ;;
     esac
   done
   local CONDUCTOR_HOME="${CONDUCTOR_HOME:-$HOME/.conductor}"
-  tail -f "$CONDUCTOR_HOME/.github/scripts/sync_agents.log"
+  local LOG="$CONDUCTOR_HOME/.github/scripts/sync_agents.log"
+  if [[ ! -f "$LOG" ]]; then
+    mkdir -p "$(dirname "$LOG")"
+    touch "$LOG"
+    echo "(Log file created — waiting for service output…)" >&2
+  fi
+  if [[ "$follow" == true ]]; then
+    tail -n "$lines" -f "$LOG"
+  else
+    tail -n "$lines" "$LOG"
+  fi
 }
 
 cmd_agents() {
@@ -378,7 +404,7 @@ cmd_agents() {
       "",
       "Project Agents:",
       "------------------------------------------------------------",
-      ((.project_agents | group_by(.project))[] | 
+      ((.project_agents | group_by(.project))[] |
         "\n  [\(.[0].project)]",
         (.[] | "    \(if .file_exists then "✓" else "✗" end) \(.role)\(if .instance then " #\(.instance)" else "" end): \(.name) (\(if .active then "active" else "inactive" end))\(if .sidekick then " [sidekick]" else "" end)\(if .file_exists then "\n        → \(.file_path)" else "" end)")
       )
@@ -513,6 +539,7 @@ case "$1" in
   register)  shift; cmd_register "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
   admin)     shift; cmd_admin "$@" ;;
+  version|--version|-v) v="$(get_version)"; echo "Conductor v${v}  (con-pilot v${v})" ;;
   help|--help|-h) usage ;;
   *)
     echo "Unknown command: $1" >&2

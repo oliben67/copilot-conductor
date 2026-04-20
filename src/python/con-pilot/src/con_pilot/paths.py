@@ -4,8 +4,6 @@ paths.py — Centralized path resolution for ConPilot.
 All filesystem paths derived from CONDUCTOR_HOME are computed here.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
@@ -40,7 +38,9 @@ class PathResolver:
         if not home:
             candidate = Path(__file__).parents[4]
             # Check for either conductor.yaml or conductor.json
-            if (candidate / "conductor.yaml").exists() or (candidate / "conductor.json").exists():
+            if (candidate / "conductor.yaml").exists() or (
+                candidate / "conductor.json"
+            ).exists():
                 home = str(candidate)
         if home:
             os.environ["CONDUCTOR_HOME"] = home

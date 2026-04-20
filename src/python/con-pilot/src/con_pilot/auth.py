@@ -6,8 +6,6 @@ GH_TOKEN, or GITHUB_TOKEN from environment variables. If multiple are set with
 different values, the service fails immediately.
 """
 
-from __future__ import annotations
-
 import os
 from dataclasses import dataclass
 

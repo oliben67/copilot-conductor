@@ -184,6 +184,7 @@ def main() -> None:
         result = pilot.list_agents(project=args.project)
         if args.json:
             import json  # noqa: PLC0415
+
             print(json.dumps(result.model_dump(), indent=2))
         else:
             # Human-readable output
@@ -209,7 +210,9 @@ def main() -> None:
                     active = "active" if agent.active else "inactive"
                     sidekick = " [sidekick]" if agent.sidekick else ""
                     instance = f" #{agent.instance}" if agent.instance else ""
-                    print(f"    {status} {agent.role}{instance}: {agent.name} ({active}){sidekick}")
+                    print(
+                        f"    {status} {agent.role}{instance}: {agent.name} ({active}){sidekick}"
+                    )
                     if agent.file_path:
                         print(f"        → {agent.file_path}")
             else:
@@ -218,6 +221,7 @@ def main() -> None:
         result = pilot.validate(config_path=args.file)
         if args.json:
             import json  # noqa: PLC0415
+
             print(json.dumps(result.model_dump(), indent=2))
         else:
             # Human-readable output

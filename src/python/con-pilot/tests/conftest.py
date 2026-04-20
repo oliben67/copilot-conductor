@@ -1,7 +1,5 @@
 """Pytest configuration and shared fixtures for con-pilot tests."""
 
-from __future__ import annotations
-
 import pytest
 
 from con_pilot.auth import clear_token_cache

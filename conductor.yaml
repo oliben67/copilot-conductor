@@ -42,47 +42,56 @@ agent:
       optimize the workflow based on the current state of the system.
     active: true
     model: claude-opus-4.6
-    cron:
-      expression: "*/15 * * * *"
     scope: system
+    # Conductor has all permissions by default - no explicit permissions needed
 
   git:
     name: cheery-git
     description: >-
-      The git agent is responsible for managing version control operations,
-      including committing changes, merging branches, and handling pull requests.
-      This agent ensures that the codebase remains consistent and that changes
-      are tracked accurately.
+      Manages version control operations including commits, branches, merges,
+      and pull requests.
     active: true
     model: claude-opus-4.6
-    cron:
-      expression: "0 * * * *"
     scope: project
+    permissions:
+      - git_commit
+      - git_branch
+      - git_push
+      - git_merge
+      - git_pr_create
+      - git_pr_review
+      - terminal_execute
+      - agent_invoke
 
   reviewer:
     name: nosy-parker-[scope:project]
     description: >-
-      The agent responsible for reviewing code changes and providing feedback on
-      pull requests. This agent will analyze the code for potential issues,
-      suggest improvements, and ensure that coding standards are maintained
-      across the project.
+      Reviews code changes and provides feedback on pull requests.
     active: true
     model: claude-opus-4.6
-    cron:
-      expression: "0 9,17 * * *"
     scope: project
+    permissions:
+      - git_pr_review
+      - agent_invoke
 
   support:
-    name: dogsbody-[scope:system]
+    name: dogsbody-[scope:system]-[rank]
     description: >-
       The agent responsible for handling miscellaneous tasks and supporting other
       agents in their operations. This agent will assist with various duties,
       ensuring that the workflow remains smooth and efficient.
     active: true
     model: claude-opus-4.6
-    cron:
-      expression: "*/30 * * * *"
     scope: system
+    permissions:
+      - file_create
+      - file_modify
+      - terminal_execute
+      - git_commit
+      - agent_invoke
+    instances:
+      min: 1
+      max: 2
 
   developer:
     name: code-monkey-[scope:project]-agent-[rank]
@@ -104,6 +113,14 @@ agent:
     instances:
       min: 1
       max: 2
+    permissions:
+      - file_create
+      - file_modify
+      - terminal_execute
+      - git_commit
+      - git_branch
+      - git_pr_create
+      - agent_invoke
 
   agile:
     name: wool-gatherer-[scope:project]
@@ -115,6 +132,12 @@ agent:
     active: true
     model: claude-opus-4.6
     scope: project
+    permissions:
+      - file_create
+      - file_modify
+      - git_commit
+      - git_pr_review
+      - agent_invoke
 
   tester:
     name: guy-fawkes-[scope:project]-[rank]
@@ -128,16 +151,59 @@ agent:
     instances:
       min: 1
       max: 2
+    permissions:
+      - file_create
+      - file_modify
+      - terminal_execute
+      - terminal_background
+      - git_commit
+      - agent_invoke
 
   arbitrator:
     name: sir
     description: >-
-      The agent responsible for resolving conflicts and making decisions when
-      there are disagreements between other agents. This agent will analyze the
-      situation, consider the perspectives of all parties involved, and make a
-      fair and informed decision to resolve the issue.
+      Resolves conflicts and makes decisions when there are disagreements
+      between other agents.
     active: true
     model: claude-opus-4.6
-    cron:
-      expression: "0 * * * *"
     scope: system
+    permissions:
+      - agent_invoke
+      - agent_manage
+
+tasks:
+  - name: git-sync
+    agent: git
+    description: Sync local repository with remote
+    instructions: >-
+      Pull latest changes from remote, resolve any conflicts if possible,
+      and push local commits. Report any merge conflicts to the conductor.
+    permissions:
+      - workspace_read
+      - codebase_context
+      - git_read
+      - git_commit
+      - git_branch
+      - git_push
+      - git_merge
+      - agent_invoke
+      - require_approval_destructive
+      - trusted_directories_only
+
+  - name: pr-review
+    agent: reviewer
+    description: Review open pull requests
+    instructions: >-
+      Review all open pull requests in the project. Analyze code for potential
+      issues, suggest improvements, and ensure coding standards are maintained.
+      Post review comments and approve or request changes as appropriate.
+    cron: "0 9,17 * * *"
+    create_on_ping: true
+    permissions:
+      - workspace_read
+      - codebase_context
+      - git_read
+      - git_pr_review
+      - agent_invoke
+      - require_approval_destructive
+      - trusted_directories_only

@@ -3,7 +3,7 @@ version: "3"
 vars:
   CON_PILOT_DIR: "{{.ROOT_DIR}}/src/python/con-pilot"
   FLATPAK_DIR: "{{.CON_PILOT_DIR}}/flatpak"
-  VENV: "{{.ROOT_DIR}}/src/python/.venv"
+  VENV: "{{.CON_PILOT_DIR}}/.venv"
   CON_PILOT: "{{.VENV}}/bin/con-pilot"
   PYTHON: "{{.VENV}}/bin/python"
   APP_ID: io.conductor.ConPilot
@@ -35,6 +35,7 @@ tasks:
       - task: _install-flatpak
       - task: _install-start
       - task: _install-show-key
+      - task: _install-smoke-test
 
   _install-env:
     internal: true
@@ -58,9 +59,17 @@ tasks:
         # Copy config files if CONDUCTOR_HOME differs from source
         if [[ "{{.ROOT_DIR}}" != "{{.CONDUCTOR_HOME}}" ]]; then
           mkdir -p "{{.CONDUCTOR_HOME}}"
-          cp "{{.ROOT_DIR}}/conductor.json" "{{.CONDUCTOR_HOME}}/conductor.json"
-          cp "{{.ROOT_DIR}}/README.md"      "{{.CONDUCTOR_HOME}}/README.md"
-          echo "Copied conductor.json and README.md to {{.CONDUCTOR_HOME}}."
+          cp "{{.ROOT_DIR}}/conductor.yaml"             "{{.CONDUCTOR_HOME}}/conductor.yaml"
+          cp "{{.ROOT_DIR}}/README.md"                  "{{.CONDUCTOR_HOME}}/README.md"
+          cp "{{.ROOT_DIR}}/conduct"                    "{{.CONDUCTOR_HOME}}/conduct"
+          cp "{{.ROOT_DIR}}/src/scripts/uninstall.sh"   "{{.CONDUCTOR_HOME}}/uninstall.sh"
+          chmod +x "{{.CONDUCTOR_HOME}}/conduct" "{{.CONDUCTOR_HOME}}/uninstall.sh"
+          # Install bash completion
+          COMPLETION_DIR="$HOME/.local/share/bash-completion/completions"
+          mkdir -p "$COMPLETION_DIR"
+          cp "{{.ROOT_DIR}}/conduct.bash-completion" "$COMPLETION_DIR/conduct"
+          echo "Copied conduct, uninstall.sh, conductor.yaml, README.md to {{.CONDUCTOR_HOME}}."
+          echo "Bash completion installed to ${COMPLETION_DIR}/conduct."
         fi
 
   _install-flatpak:
@@ -139,6 +148,54 @@ tasks:
         else
           echo "Warning: No admin key file found at {{.KEY_FILE}}."
         fi
+
+  _install-smoke-test:
+    internal: true
+    desc: Run a quick smoke test to verify the installation is healthy.
+    cmds:
+      - |
+        BASE_URL="http://{{.CON_PILOT_HOST}}:{{.CON_PILOT_PORT}}"
+        PASS=true
+        echo ""
+        echo "── Smoke test ──────────────────────────────────────────────"
+
+        # 1. Health check
+        HEALTH=$(curl -sf --connect-timeout 3 --max-time 5 "${BASE_URL}/health" 2>/dev/null) || true
+        if [[ "$(printf '%s' "$HEALTH" | sed 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')" == "ok" ]]; then
+          echo "  [PASS] GET /health → ok"
+        else
+          echo "  [FAIL] GET /health returned: ${HEALTH:-<no response>}"
+          PASS=false
+        fi
+
+        # 2. Version check
+        VERSION=$(curl -sf --connect-timeout 3 --max-time 5 "${BASE_URL}/version" 2>/dev/null) || true
+        VERSION_VAL=$(printf '%s' "$VERSION" | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+        if [[ -n "$VERSION_VAL" && "$VERSION_VAL" != "$VERSION" ]]; then
+          echo "  [PASS] GET /version → ${VERSION_VAL}"
+        else
+          echo "  [FAIL] GET /version returned: ${VERSION:-<no response>}"
+          PASS=false
+        fi
+
+        # 3. conduct status
+        STATUS_OUT=$("{{.CONDUCTOR_HOME}}/conduct" status 2>&1) || true
+        if printf '%s' "$STATUS_OUT" | grep -q 'Status:.*ok'; then
+          echo "  [PASS] conduct status → $(printf '%s' "$STATUS_OUT" | tr '\n' ' ')"
+        else
+          echo "  [FAIL] conduct status returned: ${STATUS_OUT}"
+          PASS=false
+        fi
+
+        echo "────────────────────────────────────────────────────────────"
+        if [[ "$PASS" == true ]]; then
+          echo "  All smoke tests passed. Installation complete."
+        else
+          echo "  One or more smoke tests FAILED. Check the service logs:"
+          echo "    conduct logs"
+          exit 1
+        fi
+        echo ""
 
   uninstall:
     desc: Stop server, remove Flatpak, clean .bashrc, remove sandbox data.
@@ -244,15 +301,58 @@ tasks:
 
   # ── Build (development only — stripped from setup.sh) ───────────────────────
 
-  test:
-    desc: Run the full test suite with pytest.
+  lint:
+    desc: Run ruff linter on con-pilot source code.
+    dir: "{{.CON_PILOT_DIR}}"
+    cmds:
+      - "uv run ruff check src tests {{.CLI_ARGS}}"
+
+  lint:fix:
+    desc: Run ruff linter with auto-fix enabled.
+    dir: "{{.CON_PILOT_DIR}}"
+    cmds:
+      - "uv run ruff check --fix src tests {{.CLI_ARGS}}"
+
+  format:
+    desc: Format con-pilot source code with ruff.
+    dir: "{{.CON_PILOT_DIR}}"
+    cmds:
+      - "uv run ruff format src tests {{.CLI_ARGS}}"
+
+  format:check:
+    desc: Check formatting without modifying files.
+    dir: "{{.CON_PILOT_DIR}}"
+    cmds:
+      - "uv run ruff format --check src tests {{.CLI_ARGS}}"
+
+  test:bats:
+    desc: Run BATS shell function tests.
+    cmds:
+      - bats {{.ROOT_DIR}}/src/scripts/tests/
+
+  test:pytest:
+    desc: Run the Python test suite with pytest.
     dir: "{{.CON_PILOT_DIR}}"
     cmds:
       - "{{.PYTHON}} -m pytest {{.CLI_ARGS}}"
 
-  build:
-    desc: "Run tests, build Flatpak, and package into setup.sh."
+  test:
+    desc: Run the full test suite (pytest + BATS).
     cmds:
+      - task: test:bats
+      - task: test:pytest
+
+  check:
+    desc: Run all code quality checks (lint + format check + test).
+    cmds:
+      - task: lint
+      - task: format:check
+      - task: test
+
+  build:
+    desc: "Run lint, tests, build Flatpak, and package into setup.sh."
+    cmds:
+      - task: lint
       - task: test
       - task: flatpak
       - task: release:package
@@ -268,9 +368,12 @@ tasks:
       - rm -rf flatpak/deps && mkdir -p flatpak/deps
       - uv build --wheel --out-dir flatpak/deps .
       - >-
-        "{{.VENV}}/bin/pip" download
+        uv run pip download
         -d flatpak/deps
         --only-binary=:all:
+        --python-version 3.14
+        --abi cp314
+        --platform manylinux2014_x86_64
         fastapi "uvicorn[standard]" croniter jsonschema
     sources:
       - "{{.CON_PILOT_DIR}}/pyproject.toml"
@@ -350,10 +453,12 @@ tasks:
       - mkdir -p dist
       - flatpak build-bundle flatpak/repo dist/io.conductor.ConPilot.flatpak io.conductor.ConPilot
       - echo "Bundle written to dist/io.conductor.ConPilot.flatpak"
-  
+
   flatpak:bundle:full:
-    desc: Full standalone Flatpak build with offline dependencies - includes runtime bundles.
-    dir: "{{.CON_PILOT_DIR}}"
+    desc: "[DISABLED] Full standalone Flatpak build with offline dependencies - includes runtime bundles."
+    preconditions:
+      - sh: "false"
+        msg: "flatpak:bundle:full is currently disabled."
     cmds:
       - task: flatpak:deps
       - task: flatpak:deps:offline
@@ -370,7 +475,7 @@ tasks:
       - flatpak build-bundle flatpak/repo dist/{{.APP_ID}}.flatpak {{.APP_ID}}
       - echo "Full bundle written to dist/{{.APP_ID}}.flatpak"
       - echo "Offline deps available in dist/offline/"
-  
+
   flatpak:run:
     desc: Run the installed Flatpak (pass extra args via CLI_ARGS).
     cmds:
@@ -406,6 +511,7 @@ tasks:
   build-all:
     desc: "Build everything. Pass -- --force to rebuild, -- --release to bump version and package setup.sh."
     cmds:
+      - task: check
       - |
         FORCE=false
         RELEASE=false
@@ -468,21 +574,30 @@ tasks:
         cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
-        cp "{{.ROOT_DIR}}/src/uninstall.sh"         "$STAGING/conductor/"
-        cp "{{.ROOT_DIR}}/conductor.json"       "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/scripts/uninstall.sh"         "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/conductor.yaml"       "$STAGING/conductor/"
         cp "{{.CON_PILOT_DIR}}/dist/io.conductor.ConPilot.flatpak" "$STAGING/conductor/python/con-pilot/dist/"
 
         tar czf "$PAYLOAD" -C "$STAGING" conductor
         rm -rf "$STAGING" "$DEPLOY_README"
 
-        # Build setup.sh = header (with substitutions) + archive payload
+        # Build setup.sh = header (with inlined shared functions + substitutions) + archive payload
         SETUP="${DIST_DIR}/setup-${VERSION}.sh"
         CP_VERSION=$(grep -m1 '^version' '{{.CON_PILOT_DIR}}/pyproject.toml' | sed 's/.*"\(.*\)"/\1/')
+        TMPHEADER="$(mktemp)"
+        while IFS= read -r line; do
+          if [[ "$line" == "# __FUNCTIONS__" ]]; then
+            cat '{{.ROOT_DIR}}/src/scripts/setup.sh.functions'
+          else
+            printf '%s\n' "$line"
+          fi
+        done < '{{.ROOT_DIR}}/src/scripts/setup.sh.header' > "$TMPHEADER"
         sed \
           -e "s|__VERSION__|${VERSION}|g" \
           -e "s|__CON_PILOT_VERSION__|${CP_VERSION}|g" \
           -e "s|__BUILD_DATE__|${BUILD_DATE}|g" \
-          "{{.ROOT_DIR}}/src/setup.sh.header" > "$SETUP"
+          "$TMPHEADER" > "$SETUP"
+        rm -f "$TMPHEADER"
         cat "$PAYLOAD" >> "$SETUP"
         chmod +x "$SETUP"
         rm -f "$PAYLOAD"
@@ -515,26 +630,35 @@ tasks:
         cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
-        cp "{{.ROOT_DIR}}/src/uninstall.sh"         "$STAGING/conductor/"
-        cp "{{.ROOT_DIR}}/conductor.json"       "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/scripts/uninstall.sh"         "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/conductor.yaml"       "$STAGING/conductor/"
         cp "{{.CON_PILOT_DIR}}/dist/io.conductor.ConPilot.flatpak" "$STAGING/conductor/python/con-pilot/dist/"
-        
+
         # Include offline dependencies (Platform, Sdk, uv)
         cp "{{.CON_PILOT_DIR}}/dist/offline/"* "$STAGING/conductor/python/con-pilot/dist/offline/"
 
         tar czf "$PAYLOAD" -C "$STAGING" conductor
         rm -rf "$STAGING" "$DEPLOY_README"
 
-        # Build setup.sh = header.full (with substitutions) + archive payload
+        # Build setup.sh = header.full (with inlined shared functions + substitutions) + archive payload
         SETUP="${DIST_DIR}/setup-${VERSION}-full-bundle.sh"
         CP_VERSION=$(grep -m1 '^version' '{{.CON_PILOT_DIR}}/pyproject.toml' | sed 's/.*"\(.*\)"/\1/')
+        TMPHEADER="$(mktemp)"
+        while IFS= read -r line; do
+          if [[ "$line" == "# __FUNCTIONS__" ]]; then
+            cat '{{.ROOT_DIR}}/src/scripts/setup.sh.functions'
+          else
+            printf '%s\n' "$line"
+          fi
+        done < '{{.ROOT_DIR}}/src/scripts/setup.sh.header.full' > "$TMPHEADER"
         sed \
           -e "s|__VERSION__|${VERSION}|g" \
           -e "s|__CON_PILOT_VERSION__|${CP_VERSION}|g" \
           -e "s|__BUILD_DATE__|${BUILD_DATE}|g" \
           -e "s|__RUNTIME_VERSION__|{{.RUNTIME_VERSION}}|g" \
           -e "s|__UV_VERSION__|{{.UV_VERSION}}|g" \
-          "{{.ROOT_DIR}}/src/setup.sh.header.full" > "$SETUP"
+          "$TMPHEADER" > "$SETUP"
+        rm -f "$TMPHEADER"
         cat "$PAYLOAD" >> "$SETUP"
         chmod +x "$SETUP"
         rm -f "$PAYLOAD"
@@ -553,19 +677,19 @@ tasks:
         VERSION="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
         RELEASES_DIR="{{.ROOT_DIR}}/releases/v${VERSION}"
         mkdir -p "$RELEASES_DIR"
-        
+
         # Copy setup file to versioned releases folder
         cp "{{.ROOT_DIR}}/dist/setup-${VERSION}.sh" "$RELEASES_DIR/"
-        
+
         # Generate release notes from template
         RELEASE_DATE="$(date '+%B %d, %Y')"
         NOTES_FILE="$RELEASES_DIR/release-notes-${VERSION}.md"
-        TEMPLATE="{{.ROOT_DIR}}/src/release-notes.template.md"
-        
+        TEMPLATE="{{.ROOT_DIR}}/src/scripts/release-notes.template.md"
+
         sed -e "s/__VERSION__/${VERSION}/g" \
             -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \
             "$TEMPLATE" > "$NOTES_FILE"
-        
+
         echo ""
         echo "Release v${VERSION} artifacts saved to releases/v${VERSION}/:"
         ls -lh "$RELEASES_DIR/"
@@ -583,23 +707,22 @@ tasks:
         VERSION="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
         RELEASES_DIR="{{.ROOT_DIR}}/releases/v${VERSION}"
         mkdir -p "$RELEASES_DIR"
-        
+
         # Copy both setup files to versioned releases folder
         cp "{{.ROOT_DIR}}/dist/setup-${VERSION}.sh" "$RELEASES_DIR/"
         cp "{{.ROOT_DIR}}/dist/setup-${VERSION}-full-bundle.sh" "$RELEASES_DIR/"
-        
+
         # Generate release notes from template
         RELEASE_DATE="$(date '+%B %d, %Y')"
         NOTES_FILE="$RELEASES_DIR/release-notes-${VERSION}.md"
-        TEMPLATE="{{.ROOT_DIR}}/src/release-notes-full.template.md"
-        
+        TEMPLATE="{{.ROOT_DIR}}/src/scripts/release-notes-full.template.md"
+
         sed -e "s/__VERSION__/${VERSION}/g" \
             -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \
             "$TEMPLATE" > "$NOTES_FILE"
-        
+
         echo ""
         echo "Release v${VERSION} artifacts saved to releases/v${VERSION}/:"
         ls -lh "$RELEASES_DIR/"
         echo ""
         echo "NOTE: Edit $NOTES_FILE to add version-specific changes."
-

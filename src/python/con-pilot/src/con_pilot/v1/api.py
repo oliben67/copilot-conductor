@@ -4,8 +4,6 @@ This module sets up the main APIRouter for v1 and provides
 the ConPilot dependency injection.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -30,7 +28,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # Global reference to the ConPilot instance (set at app creation)
-_pilot: "ConPilot | None" = None
+_pilot: ConPilot | None = None
 
 # Main router combining all endpoint routers
 router = APIRouter()
@@ -43,9 +41,9 @@ router.include_router(projects_router)
 router.include_router(validation_router)
 
 
-def get_pilot() -> "ConPilot":
+def get_pilot() -> ConPilot:
     """Get the ConPilot instance for dependency injection.
-    
+
     Raises:
         RuntimeError: If the pilot has not been initialized.
     """
@@ -54,28 +52,25 @@ def get_pilot() -> "ConPilot":
     return _pilot
 
 
-def set_pilot(pilot: "ConPilot") -> None:
+def set_pilot(pilot: ConPilot) -> None:
     """Set the global ConPilot instance."""
     global _pilot
     _pilot = pilot
 
 
-def create_app(pilot: "ConPilot", interval: int | None = None) -> FastAPI:
+def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
     """Create and configure the FastAPI application.
-    
     Parameters
     ----------
     pilot:
         The ConPilot instance to use for all operations.
     interval:
         Sync interval in seconds. Defaults to pilot.DEFAULT_INTERVAL.
-        
     Returns
     -------
     FastAPI:
         The configured FastAPI application.
     """
-    from con_pilot.conductor import ConPilot  # noqa: PLC0415
 
     set_pilot(pilot)
     cycle = interval if interval is not None else pilot.DEFAULT_INTERVAL

@@ -5,8 +5,6 @@ All functionality (bootstrap, config, agent sync, cron dispatch,
 session-env resolution, watcher management, and HTTP service) lives here.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import os
@@ -15,10 +13,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
-import threading
-import time
 import tomllib
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -28,7 +23,6 @@ from con_pilot.auth import (
     GitHubToken,
     resolve_github_token,
 )
-from con_pilot.exceptions import TokenConflictError, TokenNotFoundError
 from con_pilot.models import (
     AgentInfo,
     AgentListResponse,
@@ -77,7 +71,9 @@ class ConPilot:
 
     DEFAULT_INTERVAL: int = 15 * 60  # seconds (900)
 
-    def __init__(self, conductor_home: str | None = None, *, require_token: bool = True) -> None:
+    def __init__(
+        self, conductor_home: str | None = None, *, require_token: bool = True
+    ) -> None:
         from con_pilot.core.services.config_store import ConfigStore  # noqa: PLC0415
         from con_pilot.core.services.snapshot import SnapshotService  # noqa: PLC0415
 
@@ -251,11 +247,13 @@ class ConPilot:
         if not os.path.exists(target_path):
             return ValidationResult(
                 valid=False,
-                errors=[ValidationError(
-                    path="$",
-                    message=f"Configuration file not found: {target_path}",
-                    validator="file_exists",
-                )],
+                errors=[
+                    ValidationError(
+                        path="$",
+                        message=f"Configuration file not found: {target_path}",
+                        validator="file_exists",
+                    )
+                ],
                 config_path=target_path,
                 schema_path=None,
             )
@@ -266,22 +264,26 @@ class ConPilot:
         except yaml.YAMLError as e:
             return ValidationResult(
                 valid=False,
-                errors=[ValidationError(
-                    path="$",
-                    message=f"Invalid YAML: {e}",
-                    validator="yaml_parse",
-                )],
+                errors=[
+                    ValidationError(
+                        path="$",
+                        message=f"Invalid YAML: {e}",
+                        validator="yaml_parse",
+                    )
+                ],
                 config_path=target_path,
                 schema_path=None,
             )
         except json.JSONDecodeError as e:
             return ValidationResult(
                 valid=False,
-                errors=[ValidationError(
-                    path="$",
-                    message=f"Invalid JSON: {e}",
-                    validator="json_parse",
-                )],
+                errors=[
+                    ValidationError(
+                        path="$",
+                        message=f"Invalid JSON: {e}",
+                        validator="json_parse",
+                    )
+                ],
                 config_path=target_path,
                 schema_path=None,
             )
@@ -291,11 +293,13 @@ class ConPilot:
         if not os.path.exists(schema_file):
             return ValidationResult(
                 valid=False,
-                errors=[ValidationError(
-                    path="$",
-                    message=f"Schema file not found: {schema_file}",
-                    validator="schema_exists",
-                )],
+                errors=[
+                    ValidationError(
+                        path="$",
+                        message=f"Schema file not found: {schema_file}",
+                        validator="schema_exists",
+                    )
+                ],
                 config_path=target_path,
                 schema_path=None,
             )
@@ -306,24 +310,34 @@ class ConPilot:
         except json.JSONDecodeError as e:
             return ValidationResult(
                 valid=False,
-                errors=[ValidationError(
-                    path="$",
-                    message=f"Invalid schema JSON: {e}",
-                    validator="schema_parse",
-                )],
+                errors=[
+                    ValidationError(
+                        path="$",
+                        message=f"Invalid schema JSON: {e}",
+                        validator="schema_parse",
+                    )
+                ],
                 config_path=target_path,
                 schema_path=schema_file,
             )
 
         # Validate against schema
         validator = Draft202012Validator(schema)
-        for error in sorted(validator.iter_errors(config_data), key=lambda e: str(e.path)):
-            path = "$." + ".".join(str(p) for p in error.absolute_path) if error.absolute_path else "$"
-            errors.append(ValidationError(
-                path=path,
-                message=error.message,
-                validator=error.validator,
-            ))
+        for error in sorted(
+            validator.iter_errors(config_data), key=lambda e: str(e.path)
+        ):
+            path = (
+                "$." + ".".join(str(p) for p in error.absolute_path)
+                if error.absolute_path
+                else "$"
+            )
+            errors.append(
+                ValidationError(
+                    path=path,
+                    message=error.message,
+                    validator=error.validator,
+                )
+            )
 
         # Additional semantic validations
         if not errors:
@@ -369,9 +383,7 @@ class ConPilot:
     def active_roles(self) -> set[str]:
         """Return the set of active non-conductor role keys."""
         return {
-            k
-            for k, v in self.config.agents.items()
-            if k != "conductor" and v.active
+            k for k, v in self.config.agents.items() if k != "conductor" and v.active
         }
 
     def list_agents(self, project: str | None = None) -> AgentListResponse:
@@ -404,18 +416,20 @@ class ConPilot:
                 fpath = os.path.join(self.agents_dir, fname)
                 exists = os.path.exists(fpath)
 
-                system_agents.append(AgentInfo(
-                    role=role,
-                    name=self._expand_name(agent_cfg.name or role),
-                    scope="system",
-                    active=agent_cfg.active,
-                    file_exists=exists,
-                    file_path=fpath if exists else None,
-                    sidekick=agent_cfg.sidekick,
-                    augmenting=agent_cfg.augmenting,
-                    model=agent_cfg.model,
-                    description=agent_cfg.description,
-                ))
+                system_agents.append(
+                    AgentInfo(
+                        role=role,
+                        name=self._expand_name(agent_cfg.name or role),
+                        scope="system",
+                        active=agent_cfg.active,
+                        file_exists=exists,
+                        file_path=fpath if exists else None,
+                        sidekick=agent_cfg.sidekick,
+                        augmenting=agent_cfg.augmenting,
+                        model=agent_cfg.model,
+                        description=agent_cfg.description,
+                    )
+                )
             else:
                 # Project-scoped agent - check each project
                 projects_to_check = [project] if project else registered_projects
@@ -433,20 +447,22 @@ class ConPilot:
                             expanded_name = self._expand_name(
                                 agent_cfg.name or role, project=proj, rank=i
                             )
-                            project_agents.append(AgentInfo(
-                                role=role,
-                                name=expanded_name,
-                                scope="project",
-                                active=agent_cfg.active,
-                                file_exists=exists,
-                                file_path=fpath if exists else None,
-                                project=proj,
-                                instance=i,
-                                sidekick=agent_cfg.sidekick,
-                                augmenting=agent_cfg.augmenting,
-                                model=agent_cfg.model,
-                                description=agent_cfg.description,
-                            ))
+                            project_agents.append(
+                                AgentInfo(
+                                    role=role,
+                                    name=expanded_name,
+                                    scope="project",
+                                    active=agent_cfg.active,
+                                    file_exists=exists,
+                                    file_path=fpath if exists else None,
+                                    project=proj,
+                                    instance=i,
+                                    sidekick=agent_cfg.sidekick,
+                                    augmenting=agent_cfg.augmenting,
+                                    model=agent_cfg.model,
+                                    description=agent_cfg.description,
+                                )
+                            )
                     else:
                         # Single-instance project agent
                         fname = f"{role}.{proj}.agent.md"
@@ -455,19 +471,21 @@ class ConPilot:
                         expanded_name = self._expand_name(
                             agent_cfg.name or role, project=proj
                         )
-                        project_agents.append(AgentInfo(
-                            role=role,
-                            name=expanded_name,
-                            scope="project",
-                            active=agent_cfg.active,
-                            file_exists=exists,
-                            file_path=fpath if exists else None,
-                            project=proj,
-                            sidekick=agent_cfg.sidekick,
-                            augmenting=agent_cfg.augmenting,
-                            model=agent_cfg.model,
-                            description=agent_cfg.description,
-                        ))
+                        project_agents.append(
+                            AgentInfo(
+                                role=role,
+                                name=expanded_name,
+                                scope="project",
+                                active=agent_cfg.active,
+                                file_exists=exists,
+                                file_path=fpath if exists else None,
+                                project=proj,
+                                sidekick=agent_cfg.sidekick,
+                                augmenting=agent_cfg.augmenting,
+                                model=agent_cfg.model,
+                                description=agent_cfg.description,
+                            )
+                        )
 
         return AgentListResponse(
             system_agents=system_agents,
@@ -500,11 +518,17 @@ class ConPilot:
         sidekick_roles = [k for k, v in active.items() if v.sidekick]
 
         if len(sidekick_roles) > 1:
-            role_cfg = active.get("developer") if "developer" in sidekick_roles else None
+            role_cfg = (
+                active.get("developer") if "developer" in sidekick_roles else None
+            )
             raw = role_cfg.name if role_cfg else conductor_name
             sidekick_name = self._expand_name(raw, project=project, rank=1)
         elif len(sidekick_roles) == 1:
-            raw = active[sidekick_roles[0]].name if active[sidekick_roles[0]].name else sidekick_roles[0]   
+            raw = (
+                active[sidekick_roles[0]].name
+                if active[sidekick_roles[0]].name
+                else sidekick_roles[0]
+            )
             sidekick_name = self._expand_name(raw, project=project, rank=1)
         else:
             sidekick_name = conductor_name
@@ -517,7 +541,9 @@ class ConPilot:
         if self.default_model:
             result["COPILOT_DEFAULT_MODEL"] = self.default_model
         if conductor_name is None or conductor_name.strip() == "":
-            log.warning("Agent names cannot be empty. Check your conductor.json configuration.")
+            log.warning(
+                "Agent names cannot be empty. Check your conductor.json configuration."
+            )
             conductor_name = "conductor"  # fallback to default
         result["CONDUCTOR_AGENT_NAME"] = conductor_name
         result["SIDEKICK_AGENT_NAME"] = sidekick_name
@@ -771,11 +797,16 @@ class ConPilot:
             expected = self._load_or_generate_key()
             if key != expected:
                 raise ValueError(
-                    f"System agent '{role}' requires the correct system key. " "Pass it with --key."
+                    f"System agent '{role}' requires the correct system key. "
+                    "Pass it with --key."
                 )
 
     def amend_agent(
-        self, instructions_file: str, role: str, project: str | None = None, key: str | None = None
+        self,
+        instructions_file: str,
+        role: str,
+        project: str | None = None,
+        key: str | None = None,
     ) -> None:
         """
         Amend agent(s) of ``role`` by appending / merging an ``## Instructions``
@@ -794,13 +825,19 @@ class ConPilot:
             content = Path(fpath).read_text()
             fm, body = self._split_frontmatter(content)
             # Remove existing ## Instructions block if present
-            body = re.sub(r"\n## Instructions\b.*?(?=\n## |\Z)", "", body, flags=re.DOTALL)
+            body = re.sub(
+                r"\n## Instructions\b.*?(?=\n## |\Z)", "", body, flags=re.DOTALL
+            )
             body = body.rstrip() + f"\n\n## Instructions\n{new_instructions}\n"
             Path(fpath).write_text(fm + body)
             log.info("Amended: %s", fpath)
 
     def replace_agent(
-        self, instructions_file: str, role: str, project: str | None = None, key: str | None = None
+        self,
+        instructions_file: str,
+        role: str,
+        project: str | None = None,
+        key: str | None = None,
     ) -> None:
         """
         Replace the body of agent(s) of ``role`` entirely with the content of
@@ -820,7 +857,9 @@ class ConPilot:
             Path(fpath).write_text(fm + new_body)
             log.info("Replaced: %s", fpath)
 
-    def reset_agent(self, role: str, project: str | None = None, key: str | None = None) -> None:
+    def reset_agent(
+        self, role: str, project: str | None = None, key: str | None = None
+    ) -> None:
         """
         Reset agent(s) of ``role`` to the template (or re-generate from conductor.json
         if no template exists).  Existing files are overwritten.
@@ -1038,7 +1077,9 @@ class ConPilot:
                     role,
                     {
                         **agent_cfg.get(role, {}),
-                        "name": self._expand_name(agent_cfg.get(role, {}).get("name", role)),
+                        "name": self._expand_name(
+                            agent_cfg.get(role, {}).get("name", role)
+                        ),
                     },
                     self.default_model,
                 )
@@ -1088,13 +1129,20 @@ class ConPilot:
                             shutil.move(retired, dest)
                             log.info("Restored (project=%s): %s", project_name, fname)
                         else:
-                            expanded = self._expand_name(name_tmpl, project=project_name, rank=i)
+                            expanded = self._expand_name(
+                                name_tmpl, project=project_name, rank=i
+                            )
                             content = self._generate_agent_file(
                                 role, {**role_cfg, "name": expanded}, self.default_model
                             )
                             with open(dest, "w") as f:
                                 f.write(content)
-                            log.info("Created (project=%s): %s rank=%d", project_name, fname, i)
+                            log.info(
+                                "Created (project=%s): %s rank=%d",
+                                project_name,
+                                fname,
+                                i,
+                            )
                 else:
                     fname = f"{role}.{project_name}.agent.md"
                     dest = os.path.join(p_agents, fname)
@@ -1117,11 +1165,15 @@ class ConPilot:
 
     # ── Cron ───────────────────────────────────────────────────────────────────
 
-    def _cron_state_path(self, role: str, job_name: str, project: str | None = None) -> str:
+    def _cron_state_path(
+        self, role: str, job_name: str, project: str | None = None
+    ) -> str:
         root = self._role_cron_root(role, project)
         return os.path.join(root, ".state", f"{role}__{job_name}.last_run")
 
-    def _last_run(self, role: str, job_name: str, project: str | None = None) -> datetime:
+    def _last_run(
+        self, role: str, job_name: str, project: str | None = None
+    ) -> datetime:
         path = self._cron_state_path(role, job_name, project)
         if not os.path.exists(path):
             return datetime.fromtimestamp(0, tz=UTC)
@@ -1140,7 +1192,7 @@ class ConPilot:
         now = datetime.now(tz=UTC)
         if not HAS_CRONITER:
             return (now - last_run).total_seconds() >= 86400
-        cron = croniter(schedule, last_run.replace(tzinfo=None)) # type: ignore
+        cron = croniter(schedule, last_run.replace(tzinfo=None))  # type: ignore
         next_run = cron.get_next(datetime).replace(tzinfo=UTC)
         return now >= next_run
 

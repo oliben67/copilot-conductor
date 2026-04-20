@@ -5,21 +5,17 @@ Provides in-memory caching and persistent storage of conductor configuration
 versions in CONDUCTOR_HOME/.scores/.
 """
 
-from __future__ import annotations
-
 import difflib
 import json
 import logging
 import os
-import shutil
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
 from pydantic import BaseModel, Field
 
-from con_pilot.core.models.config import ConductorConfig, VersionConfig
+from con_pilot.core.models.config import ConductorConfig
 
 if TYPE_CHECKING:
     from con_pilot.paths import PathResolver
@@ -77,7 +73,7 @@ class ConfigStore:
     SCORES_DIR = ".scores"
     INDEX_FILE = "index.json"
 
-    def __init__(self, paths: "PathResolver") -> None:
+    def __init__(self, paths: PathResolver) -> None:
         self._paths = paths
         self._cache: dict[str, ConductorConfig] = {}
         self._index: ConfigIndex | None = None

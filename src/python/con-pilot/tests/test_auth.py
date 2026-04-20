@@ -1,7 +1,5 @@
 """Tests for con_pilot.auth module — GitHub token resolution."""
 
-from __future__ import annotations
-
 import pytest
 
 from con_pilot.auth import (

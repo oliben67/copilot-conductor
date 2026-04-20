@@ -1,8 +1,0 @@
-# Cron jobs for the git agent.
-# Format: TOML — add [[job]] blocks with name, schedule (cron expression), and task.
-#
-# Example:
-# [[job]]
-# name = "daily-check"
-# schedule = "0 9 * * *"
-# task = "Describe what the git agent should do at this time."

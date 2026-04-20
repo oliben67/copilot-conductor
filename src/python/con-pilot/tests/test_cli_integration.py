@@ -4,8 +4,6 @@ Every test runs against an isolated CONDUCTOR_HOME under pytest's tmp_path.
 The real ~/.conductor directory is never touched.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import subprocess
@@ -207,8 +205,8 @@ class TestSetupEnv:
     def test_outputs_key_value_pairs(self, home: Path) -> None:
         r = _run("setup-env", home=home)
         assert r.returncode == 0
-        lines = [l for l in r.stdout.strip().splitlines() if "=" in l]
-        env = dict(l.split("=", 1) for l in lines)
+        lines = [line for line in r.stdout.strip().splitlines() if "=" in line]
+        env = dict(line.split("=", 1) for line in lines)
         assert env["CONDUCTOR_HOME"] == str(home)
         assert env["CONDUCTOR_AGENT_NAME"] == "uppity"
         assert env["COPILOT_DEFAULT_MODEL"] == "test-model"

@@ -5,8 +5,6 @@ Provides tar.gz snapshots of the .github directory with change detection
 for automatic backups when monitored files (md, cron, json, yaml) change.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging
@@ -36,10 +34,14 @@ class SnapshotMetadata(BaseModel):
 
     filename: str = Field(..., description="Snapshot filename")
     timestamp: datetime = Field(..., description="When this snapshot was created")
-    automatic: bool = Field(default=False, description="Whether this was an automatic snapshot")
+    automatic: bool = Field(
+        default=False, description="Whether this was an automatic snapshot"
+    )
     file_count: int = Field(default=0, description="Number of files in snapshot")
     size_bytes: int = Field(default=0, description="Size of the archive in bytes")
-    file_hashes: dict[str, str] = Field(default_factory=dict, description="MD5 hashes of included files")
+    file_hashes: dict[str, str] = Field(
+        default_factory=dict, description="MD5 hashes of included files"
+    )
 
 
 class SnapshotIndex(BaseModel):
@@ -65,7 +67,7 @@ class SnapshotService:
     INSTRUCTIONS_DIR = ".instructions"
     INDEX_FILE = "snapshot-index.json"
 
-    def __init__(self, paths: "PathResolver") -> None:
+    def __init__(self, paths: PathResolver) -> None:
         self._paths = paths
         self._index: SnapshotIndex | None = None
         self._lock = threading.Lock()
@@ -210,7 +212,7 @@ class SnapshotService:
             file_count = 0
 
             with tarfile.open(filepath, "w:gz") as tar:
-                for root, dirs, files in os.walk(github_dir):
+                for root, _, files in os.walk(github_dir):
                     for fname in files:
                         if self._should_include(fname):
                             full_path = os.path.join(root, fname)

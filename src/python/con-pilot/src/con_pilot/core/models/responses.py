@@ -1,7 +1,5 @@
 """Response models for API endpoints."""
 
-from __future__ import annotations
-
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -55,9 +53,7 @@ class ValidationError(BaseModel):
         ...,
         description="JSON path where the error occurred (e.g., '$.agent.conductor').",
     )
-    message: str = Field(
-        ..., description="Human-readable description of the error."
-    )
+    message: str = Field(..., description="Human-readable description of the error.")
     validator: str = Field(
         default="unknown", description="Name of the validator that failed."
     )
@@ -70,9 +66,7 @@ class ValidationResult(BaseModel):
     errors: list[ValidationError] = Field(
         default_factory=list, description="List of validation errors."
     )
-    warnings: list[str] = Field(
-        default_factory=list, description="Non-fatal warnings."
-    )
+    warnings: list[str] = Field(default_factory=list, description="Non-fatal warnings.")
     config_path: str | None = Field(
         default=None, description="Path to the validated config file."
     )

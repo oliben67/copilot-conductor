@@ -4,8 +4,6 @@ trust.py — Trust registry management for ConPilot.
 Manages the trust.json file that tracks registered projects and their directories.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import os

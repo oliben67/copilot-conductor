@@ -6,6 +6,7 @@ build/
 
 # Virtual environments
 .venv/
+src/python/**/.venv/
 
 # Build / release artefacts
 dist/
@@ -32,8 +33,8 @@ key
 .sandbox/
 
 # Runtime state
-.github/agents/cron/.state/
-.github/agents/cron/pending.log
+.copilot/system/agents/cron/.state/
+.copilot/system/agents/cron/pending.log
 
 # Copilot session logs
 .copilot/

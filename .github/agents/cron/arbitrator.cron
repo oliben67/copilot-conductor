@@ -1,9 +1,0 @@
-[[job]]
-name = "conflict-scan"
-schedule = "0 10 * * *"
-task = "Scan recent agent activity logs for unresolved conflicts or disagreements between agents. Summarize any open disputes and propose resolutions."
-
-[[job]]
-name = "agent-consensus-check"
-schedule = "0 12 * * 5"
-task = "Weekly: review cross-agent decisions made in the past week. Verify that all agents are aligned on current project standards and flag any contradictory behaviours or outputs."

@@ -1,13 +1,16 @@
 """Project management endpoints."""
 
-from __future__ import annotations
-
 import os
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from con_pilot.core.schemas import RegisterRequest, ReplaceRequest, ResetRequest, RetireProjectRequest
+from con_pilot.core.schemas import (
+    RegisterRequest,
+    ReplaceRequest,
+    ResetRequest,
+    RetireProjectRequest,
+)
 
 if TYPE_CHECKING:
     from con_pilot.conductor import ConPilot
@@ -15,7 +18,7 @@ if TYPE_CHECKING:
 router = APIRouter(tags=["projects"])
 
 
-def get_pilot() -> "ConPilot":
+def get_pilot() -> ConPilot:
     """Dependency to get the ConPilot instance."""
     from con_pilot.v1.api import get_pilot as _get_pilot
 
@@ -23,8 +26,9 @@ def get_pilot() -> "ConPilot":
 
 
 @router.get("/setup-env")
-def setup_env(pilot: "ConPilot" = Depends(get_pilot)) -> dict:
+def setup_env(pilot: ConPilot | None = None) -> dict:
     """Return session environment variables derived from conductor.json."""
+    pilot = pilot or get_pilot()
     result = pilot.resolve_project()
     if result:
         os.environ["PROJECT_NAME"] = result[0]
@@ -35,28 +39,32 @@ def setup_env(pilot: "ConPilot" = Depends(get_pilot)) -> dict:
 
 
 @router.post("/register")
-def register(body: RegisterRequest, pilot: "ConPilot" = Depends(get_pilot)) -> dict:
+def register(body: RegisterRequest, pilot: ConPilot | None = None) -> dict:
     """Register a new project."""
+    pilot = pilot or get_pilot()
     pilot.register(body.name, body.directory)
     return {"status": "ok"}
 
 
 @router.post("/retire-project")
-def retire_project(body: RetireProjectRequest, pilot: "ConPilot" = Depends(get_pilot)) -> dict:
+def retire_project(body: RetireProjectRequest, pilot: ConPilot | None = None) -> dict:
     """Retire a project."""
+    pilot = pilot or get_pilot()
     pilot.retire_project(body.name)
     return {"status": "ok"}
 
 
 @router.post("/replace")
-def replace_agent(body: ReplaceRequest, pilot: "ConPilot" = Depends(get_pilot)) -> dict:
+def replace_agent(body: ReplaceRequest, pilot: ConPilot | None = None) -> dict:
     """Replace agent body entirely with the content of an instructions file."""
+    pilot = pilot or get_pilot()
     pilot.replace_agent(body.file, body.role, body.project, body.key)
     return {"status": "ok"}
 
 
 @router.post("/reset")
-def reset_agent(body: ResetRequest, pilot: "ConPilot" = Depends(get_pilot)) -> dict:
+def reset_agent(body: ResetRequest, pilot: ConPilot | None = None) -> dict:
     """Reset agent(s) to their template / default generated content."""
+    pilot = pilot or get_pilot()
     pilot.reset_agent(body.role, body.project, body.key)
     return {"status": "ok"}

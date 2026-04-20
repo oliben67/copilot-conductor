@@ -4,8 +4,6 @@ Each test runs against an isolated CONDUCTOR_HOME under pytest's tmp_path;
 the real ~/.conductor directory is never touched.
 """
 
-from __future__ import annotations
-
 import json
 import sys
 from pathlib import Path
@@ -201,7 +199,11 @@ class TestListAgents:
         assert support.file_exists is False
 
     def test_lists_project_agents_with_project(
-        self, pilot: ConPilot, home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        pilot: ConPilot,
+        home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         # Register a project so trust.json has an entry
         proj = tmp_path / "myproj"
@@ -325,34 +327,44 @@ class TestCron:
         pilot.cron()
 
     def test_creates_placeholder_cron_file(self, pilot: ConPilot, home: Path) -> None:
-        pilot._cfg = ConductorConfig(**{
-            "models": {"authorized_models": ["test-model"], "default_model": "test-model"},
-            "agent": {
-                "conductor": {"name": "uppity", "active": True},
-                "support": {
-                    "name": "dogsbody",
-                    "active": True,
-                    "scope": "system",
-                    "cron": {"expression": "0 9 * * *"},
+        pilot._cfg = ConductorConfig(
+            **{
+                "models": {
+                    "authorized_models": ["test-model"],
+                    "default_model": "test-model",
                 },
-            },
-        })
+                "agent": {
+                    "conductor": {"name": "uppity", "active": True},
+                    "support": {
+                        "name": "dogsbody",
+                        "active": True,
+                        "scope": "system",
+                        "cron": {"expression": "0 9 * * *"},
+                    },
+                },
+            }
+        )
         pilot.cron()
         assert (home / ".github" / "agents" / "cron" / "support.cron").exists()
 
     def test_skips_inactive_agent(self, pilot: ConPilot) -> None:
-        pilot._cfg = ConductorConfig(**{
-            "models": {"authorized_models": ["test-model"], "default_model": "test-model"},
-            "agent": {
-                "conductor": {"name": "uppity", "active": True},
-                "support": {
-                    "name": "dogsbody",
-                    "active": False,
-                    "scope": "system",
-                    "cron": {"expression": "0 9 * * *"},
+        pilot._cfg = ConductorConfig(
+            **{
+                "models": {
+                    "authorized_models": ["test-model"],
+                    "default_model": "test-model",
                 },
-            },
-        })
+                "agent": {
+                    "conductor": {"name": "uppity", "active": True},
+                    "support": {
+                        "name": "dogsbody",
+                        "active": False,
+                        "scope": "system",
+                        "cron": {"expression": "0 9 * * *"},
+                    },
+                },
+            }
+        )
         pilot.cron()  # should not raise or create any cron files
 
 
@@ -769,7 +781,9 @@ class TestCli:
 class TestYamlConfig:
     """Tests for YAML configuration file support."""
 
-    def test_loads_yaml_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_loads_yaml_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that conductor.yaml is loaded correctly."""
         (tmp_path / "conductor.yaml").write_text(yaml.dump(_CONFIG))
         agents = tmp_path / ".github" / "agents"
@@ -790,11 +804,17 @@ class TestYamlConfig:
     ) -> None:
         """Test that conductor.yaml is preferred over conductor.json."""
         # Write JSON with one model
-        json_config = {**_CONFIG, "models": {**_CONFIG["models"], "default_model": "json-model"}}
+        json_config = {
+            **_CONFIG,
+            "models": {**_CONFIG["models"], "default_model": "json-model"},
+        }
         (tmp_path / "conductor.json").write_text(json.dumps(json_config, indent=2))
 
         # Write YAML with different model
-        yaml_config = {**_CONFIG, "models": {**_CONFIG["models"], "default_model": "yaml-model"}}
+        yaml_config = {
+            **_CONFIG,
+            "models": {**_CONFIG["models"], "default_model": "yaml-model"},
+        }
         (tmp_path / "conductor.yaml").write_text(yaml.dump(yaml_config))
 
         agents = tmp_path / ".github" / "agents"

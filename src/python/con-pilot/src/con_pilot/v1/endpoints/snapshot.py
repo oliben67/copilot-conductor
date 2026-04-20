@@ -1,10 +1,8 @@
 """Snapshot management endpoints for .github directory backups."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -16,7 +14,7 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/snapshot", tags=["snapshot"])
 
 
-def get_pilot() -> "ConPilot":
+def get_pilot() -> ConPilot:
     """Dependency to get the ConPilot instance."""
     from con_pilot.v1.api import get_pilot as _get_pilot
 
@@ -29,9 +27,15 @@ def get_pilot() -> "ConPilot":
 class SnapshotListResponse(BaseModel):
     """Response for listing all snapshots."""
 
-    snapshots: list[SnapshotMetadata] = Field(..., description="List of stored snapshots")
-    instructions_dir: str = Field(..., description="Path to the .instructions directory")
-    watcher_running: bool = Field(..., description="Whether the change watcher is running")
+    snapshots: list[SnapshotMetadata] = Field(
+        ..., description="List of stored snapshots"
+    )
+    instructions_dir: str = Field(
+        ..., description="Path to the .instructions directory"
+    )
+    watcher_running: bool = Field(
+        ..., description="Whether the change watcher is running"
+    )
 
 
 class SnapshotCreateRequest(BaseModel):
@@ -73,12 +77,13 @@ class WatcherStatusResponse(BaseModel):
 
 
 @router.get("", response_model=SnapshotListResponse)
-def list_snapshots(pilot: "ConPilot" = Depends(get_pilot)) -> SnapshotListResponse:
+def list_snapshots(pilot: ConPilot | None = None) -> SnapshotListResponse:
     """
     List all stored .github snapshots.
 
     Returns metadata for each snapshot including timestamps and file counts.
     """
+    pilot = pilot or get_pilot()
     service = pilot.snapshot_service
     return SnapshotListResponse(
         snapshots=service.list_snapshots(),
@@ -87,10 +92,12 @@ def list_snapshots(pilot: "ConPilot" = Depends(get_pilot)) -> SnapshotListRespon
     )
 
 
-@router.post("", response_model=SnapshotCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=SnapshotCreateResponse, status_code=status.HTTP_201_CREATED
+)
 def create_snapshot(
     request: SnapshotCreateRequest | None = None,
-    pilot: "ConPilot" = Depends(get_pilot),
+    pilot: ConPilot | None = None,
 ) -> SnapshotCreateResponse:
     """
     Create a new snapshot of the .github directory.
@@ -98,6 +105,7 @@ def create_snapshot(
     Creates a tar.gz archive containing all .md, .cron, .json, .yaml, and .yml
     files from the .github directory.
     """
+    pilot = pilot or get_pilot()
     service = pilot.snapshot_service
     automatic = request.automatic if request else False
 
@@ -116,12 +124,13 @@ def create_snapshot(
 
 
 @router.get("/changes", response_model=ChangeDetectionResponse)
-def check_changes(pilot: "ConPilot" = Depends(get_pilot)) -> ChangeDetectionResponse:
+def check_changes(pilot: ConPilot | None = None) -> ChangeDetectionResponse:
     """
     Check if monitored files have changed since last snapshot.
 
     Compares current file hashes with the last recorded hashes.
     """
+    pilot = pilot or get_pilot()
     service = pilot.snapshot_service
     has_changes, current_hashes = service.detect_changes()
 
@@ -134,13 +143,14 @@ def check_changes(pilot: "ConPilot" = Depends(get_pilot)) -> ChangeDetectionResp
 
 @router.post("/check-and-create", response_model=SnapshotCreateResponse | None)
 def check_and_create_snapshot(
-    pilot: "ConPilot" = Depends(get_pilot),
+    pilot: ConPilot | None = None,
 ) -> SnapshotCreateResponse | dict:
     """
     Check for changes and create automatic snapshot if needed.
 
     Returns the snapshot metadata if created, or a message if no changes detected.
     """
+    pilot = pilot or get_pilot()
     service = pilot.snapshot_service
     result = service.check_and_snapshot()
 
@@ -154,19 +164,22 @@ def check_and_create_snapshot(
 
 
 @router.get("/watcher", response_model=WatcherStatusResponse)
-def get_watcher_status(pilot: "ConPilot" = Depends(get_pilot)) -> WatcherStatusResponse:
+def get_watcher_status(pilot: ConPilot | None = None) -> WatcherStatusResponse:
     """Get the current status of the change watcher."""
+    pilot = pilot or get_pilot()
     service = pilot.snapshot_service
     return WatcherStatusResponse(
         running=service._watcher_running,
-        message="Watcher is running" if service._watcher_running else "Watcher is stopped",
+        message="Watcher is running"
+        if service._watcher_running
+        else "Watcher is stopped",
     )
 
 
 @router.post("/watcher/start", response_model=WatcherStatusResponse)
 def start_watcher(
     interval: int = 60,
-    pilot: "ConPilot" = Depends(get_pilot),
+    pilot: ConPilot | None = None,
 ) -> WatcherStatusResponse:
     """
     Start the automatic snapshot watcher.
@@ -176,6 +189,7 @@ def start_watcher(
     interval:
         Check interval in seconds (default: 60).
     """
+    pilot = pilot or get_pilot()
     service = pilot.snapshot_service
     if service._watcher_running:
         return WatcherStatusResponse(
@@ -191,8 +205,9 @@ def start_watcher(
 
 
 @router.post("/watcher/stop", response_model=WatcherStatusResponse)
-def stop_watcher(pilot: "ConPilot" = Depends(get_pilot)) -> WatcherStatusResponse:
+def stop_watcher(pilot: ConPilot | None = None) -> WatcherStatusResponse:
     """Stop the automatic snapshot watcher."""
+    pilot = pilot or get_pilot()
     service = pilot.snapshot_service
     if not service._watcher_running:
         return WatcherStatusResponse(
@@ -210,9 +225,10 @@ def stop_watcher(pilot: "ConPilot" = Depends(get_pilot)) -> WatcherStatusRespons
 @router.get("/{filename}", response_model=SnapshotMetadata)
 def get_snapshot(
     filename: str,
-    pilot: "ConPilot" = Depends(get_pilot),
+    pilot: ConPilot | None = None,
 ) -> SnapshotMetadata:
     """Get metadata for a specific snapshot."""
+    pilot = pilot or get_pilot()
     service = pilot.snapshot_service
     metadata = service.get_snapshot(filename)
 
@@ -228,9 +244,10 @@ def get_snapshot(
 @router.get("/{filename}/download")
 def download_snapshot(
     filename: str,
-    pilot: "ConPilot" = Depends(get_pilot),
+    pilot: ConPilot | None = None,
 ) -> FileResponse:
     """Download a snapshot file."""
+    pilot = pilot or get_pilot()
     service = pilot.snapshot_service
     path = service.get_snapshot_path(filename)
 
@@ -250,9 +267,10 @@ def download_snapshot(
 @router.delete("/{filename}", response_model=SnapshotDeleteResponse)
 def delete_snapshot(
     filename: str,
-    pilot: "ConPilot" = Depends(get_pilot),
+    pilot: ConPilot | None = None,
 ) -> SnapshotDeleteResponse:
     """Delete a snapshot."""
+    pilot = pilot or get_pilot()
     service = pilot.snapshot_service
     deleted = service.delete_snapshot(filename)
 

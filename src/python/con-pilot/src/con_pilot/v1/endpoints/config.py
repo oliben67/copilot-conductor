@@ -1,14 +1,16 @@
 """Configuration version management endpoints."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 from con_pilot.core.models import ConductorConfig, ValidationResult
-from con_pilot.core.services.config_store import ConfigVersion, VersionExistsError, VersionNotFoundError
+from con_pilot.core.services.config_store import (
+    ConfigVersion,
+    VersionExistsError,
+    VersionNotFoundError,
+)
 
 if TYPE_CHECKING:
     from con_pilot.conductor import ConPilot
@@ -29,15 +31,21 @@ def get_pilot() -> "ConPilot":
 class ConfigListResponse(BaseModel):
     """Response for listing all stored configurations."""
 
-    versions: list[ConfigVersion] = Field(..., description="List of stored config versions")
-    active_version: str | None = Field(None, description="Currently active config version")
+    versions: list[ConfigVersion] = Field(
+        ..., description="List of stored config versions"
+    )
+    active_version: str | None = Field(
+        None, description="Currently active config version"
+    )
     scores_dir: str = Field(..., description="Path to the .scores directory")
 
 
 class ConfigCreateRequest(BaseModel):
     """Request body for creating a new configuration."""
 
-    config: dict[str, Any] = Field(..., description="The conductor configuration as a dict")
+    config: dict[str, Any] = Field(
+        ..., description="The conductor configuration as a dict"
+    )
 
 
 class ConfigCreateResponse(BaseModel):
@@ -67,7 +75,9 @@ class ConfigDiffResponse(BaseModel):
 class ConfigActivateRequest(BaseModel):
     """Request body for activating a version."""
 
-    restart: bool = Field(default=True, description="Whether to trigger a service restart")
+    restart: bool = Field(
+        default=True, description="Whether to trigger a service restart"
+    )
 
 
 class ConfigActivateResponse(BaseModel):
@@ -89,12 +99,13 @@ class ConfigErrorResponse(BaseModel):
 
 
 @router.get("", response_model=ConfigListResponse)
-def list_configs(pilot: "ConPilot" = Depends(get_pilot)) -> ConfigListResponse:
+def list_configs(pilot: ConPilot | None = None) -> ConfigListResponse:
     """
     List all stored configuration versions.
 
     Returns metadata for each version including timestamps and descriptions.
     """
+    pilot = pilot or get_pilot()
     store = pilot.config_store
 
     # Get active config version if available
@@ -113,12 +124,13 @@ def list_configs(pilot: "ConPilot" = Depends(get_pilot)) -> ConfigListResponse:
 
 
 @router.get("/{version}", response_model=dict)
-def get_config(version: str, pilot: "ConPilot" = Depends(get_pilot)) -> dict:
+def get_config(version: str, pilot: ConPilot | None = None) -> dict:
     """
     Get a specific configuration version.
 
     Returns the full configuration as a dict.
     """
+    pilot = pilot or get_pilot()
     store = pilot.config_store
 
     try:
@@ -128,19 +140,20 @@ def get_config(version: str, pilot: "ConPilot" = Depends(get_pilot)) -> dict:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
-        )
+        ) from e
 
 
 @router.post("/diff", response_model=ConfigDiffResponse)
 def diff_configs(
     body: ConfigDiffRequest,
-    pilot: "ConPilot" = Depends(get_pilot),
+    pilot: ConPilot | None = None,
 ) -> ConfigDiffResponse:
     """
     Generate a unified diff between two configuration versions.
 
     Both versions must exist in the .scores directory.
     """
+    pilot = pilot or get_pilot()
     store = pilot.config_store
 
     try:
@@ -158,18 +171,19 @@ def diff_configs(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
-        )
+        ) from e
 
 
 @router.get("/{version}/diff-with-active", response_model=ConfigDiffResponse)
 def diff_with_active(
     version: str,
     context_lines: int = 3,
-    pilot: "ConPilot" = Depends(get_pilot),
+    pilot: ConPilot | None = None,
 ) -> ConfigDiffResponse:
     """
     Generate a diff between a stored version and the active configuration.
     """
+    pilot = pilot or get_pilot()
     store = pilot.config_store
 
     try:
@@ -183,18 +197,20 @@ def diff_with_active(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
-        )
+        ) from e
     except FileNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
-        )
+        ) from e
 
 
-@router.post("", response_model=ConfigCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=ConfigCreateResponse, status_code=status.HTTP_201_CREATED
+)
 def create_config(
     body: ConfigCreateRequest,
-    pilot: "ConPilot" = Depends(get_pilot),
+    pilot: ConPilot | None = None,
 ) -> ConfigCreateResponse:
     """
     Create a new configuration version.
@@ -204,6 +220,7 @@ def create_config(
 
     Validates the configuration against the schema before saving.
     """
+    pilot = pilot or get_pilot()
     store = pilot.config_store
 
     # Parse and validate the config
@@ -213,7 +230,7 @@ def create_config(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid configuration: {e}",
-        )
+        ) from e
 
     # Check for version field
     if not config.version:
@@ -223,13 +240,12 @@ def create_config(
         )
 
     # Perform schema validation
-    import tempfile
-    import yaml as _yaml
     import os
+    import tempfile
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False
-    ) as tmp:
+    import yaml as _yaml
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
         _yaml.safe_dump(
             config.model_dump(mode="json", by_alias=True, exclude_none=True),
             tmp,
@@ -261,7 +277,7 @@ def create_config(
                 "message": str(e),
                 "existing_version": e.existing.model_dump(mode="json"),
             },
-        )
+        ) from e
 
     return ConfigCreateResponse(
         message=f"Configuration version {config.version.number} created successfully",
@@ -275,9 +291,10 @@ def create_config(
 
 def verify_admin_key(
     x_admin_key: str | None = Header(None),
-    pilot: "ConPilot" = Depends(get_pilot),
-) -> "ConPilot":
+    pilot: ConPilot | None = None,
+) -> ConPilot:
     """Verify the admin key header matches the system key."""
+    pilot = pilot or get_pilot()
     if not x_admin_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -302,7 +319,7 @@ def verify_admin_key(
 def update_config(
     version: str,
     body: ConfigCreateRequest,
-    pilot: "ConPilot" = Depends(get_pilot),
+    pilot: ConPilot | None = None,
 ) -> ConfigCreateResponse:
     """
     Update an existing configuration version (requires admin key).
@@ -310,6 +327,8 @@ def update_config(
     Allows overwriting an existing version. The version number in the request
     body must match the URL parameter.
     """
+    pilot = pilot or get_pilot()
+
     store = pilot.config_store
 
     # Parse and validate the config
@@ -319,7 +338,7 @@ def update_config(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid configuration: {e}",
-        )
+        ) from e
 
     # Check for version field and match
     if not config.version:
@@ -335,13 +354,12 @@ def update_config(
         )
 
     # Perform schema validation
-    import tempfile
-    import yaml as _yaml
     import os
+    import tempfile
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False
-    ) as tmp:
+    import yaml as _yaml
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
         _yaml.safe_dump(
             config.model_dump(mode="json", by_alias=True, exclude_none=True),
             tmp,
@@ -381,7 +399,7 @@ def update_config(
 def activate_config(
     version: str,
     body: ConfigActivateRequest | None = None,
-    pilot: "ConPilot" = Depends(get_pilot),
+    pilot: ConPilot | None = None,
 ) -> ConfigActivateResponse:
     """
     Activate a stored configuration version (requires admin key).
@@ -391,16 +409,17 @@ def activate_config(
     2. Copy the selected version to conductor.yaml
     3. Optionally trigger a service restart
     """
+    pilot = pilot or get_pilot()
     store = pilot.config_store
 
     try:
         # Activate the version (this backups current and copies new)
-        config = store.activate(version)
+        store.activate(version)
     except VersionNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
-        )
+        ) from e
 
     # Reload the pilot's config
     pilot.reload_config()
@@ -426,12 +445,13 @@ def activate_config(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(verify_admin_key)],
 )
-def delete_config(version: str, pilot: "ConPilot" = Depends(get_pilot)) -> None:
+def delete_config(version: str, pilot: ConPilot | None = None) -> None:
     """
     Delete a stored configuration version (requires admin key).
 
     Cannot delete the currently active version.
     """
+    pilot = pilot or get_pilot()
     store = pilot.config_store
 
     # Check if this is the active version
@@ -450,4 +470,4 @@ def delete_config(version: str, pilot: "ConPilot" = Depends(get_pilot)) -> None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
-        )
+        ) from e
