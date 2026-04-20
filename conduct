@@ -6,11 +6,20 @@ CON_PILOT_HOST="${CON_PILOT_HOST:-localhost}"
 CON_PILOT_PORT="${CON_PILOT_PORT:-8000}"
 BASE_URL="http://${CON_PILOT_HOST}:${CON_PILOT_PORT}"
 
-# Lazy-load version from service (with 2s timeout) or fall back to unknown
+# Lazy-load version from service (with 2s timeout) or fall back to VERSION file
 _VERSION_CACHE=""
 get_version() {
   if [[ -z "$_VERSION_CACHE" ]]; then
-    _VERSION_CACHE="$(curl -sf --connect-timeout 2 --max-time 2 "${BASE_URL}/version" 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo 'unknown')"
+    local http_ver
+    http_ver="$(curl -sf --connect-timeout 2 --max-time 2 "${BASE_URL}/version" 2>/dev/null \
+      | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+    if [[ -n "$http_ver" ]]; then
+      _VERSION_CACHE="$http_ver"
+    else
+      _VERSION_CACHE="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null \
+        || cat "${CONDUCTOR_HOME:-$HOME/.conductor}/VERSION" 2>/dev/null \
+        || echo 'unknown')"
+    fi
   fi
   echo "$_VERSION_CACHE"
 }

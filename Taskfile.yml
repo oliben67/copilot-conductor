@@ -573,6 +573,7 @@ tasks:
 
         cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/VERSION"              "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
         cp "{{.ROOT_DIR}}/src/scripts/uninstall.sh"         "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conductor.yaml"       "$STAGING/conductor/"
@@ -629,6 +630,7 @@ tasks:
 
         cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/VERSION"              "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
         cp "{{.ROOT_DIR}}/src/scripts/uninstall.sh"         "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conductor.yaml"       "$STAGING/conductor/"
