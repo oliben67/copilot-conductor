@@ -2,7 +2,7 @@
 
 > **A multi-agent orchestration framework for [GitHub Copilot](https://github.com/features/copilot).**
 
-Conductor manages a fleet of AI agents defined in a single `conductor.json` file. It automatically creates, retires, and restores `.agent.md` files, dispatches scheduled cron tasks, and exposes every lifecycle operation through both a CLI (`conduct`) and an HTTP API (`con-pilot`).
+Conductor manages a fleet of AI agents defined in a single `conductor.yaml` file. It automatically creates, retires, and restores `.agent.md` files, dispatches scheduled cron tasks, and exposes every lifecycle operation through both a CLI (`conduct`) and an HTTP API (`con-pilot`).
 
 ---
 
@@ -20,7 +20,7 @@ Conductor manages a fleet of AI agents defined in a single `conductor.json` file
   - [Overview](#overview)
   - [How it works](#how-it-works)
   - [Directory layout](#directory-layout)
-  - [conductor.json reference](#conductorjson-reference)
+  - [conductor.yaml reference](#conductoryaml-reference)
   - [trust.json](#trustjson)
   - [Agent naming templates](#agent-naming-templates)
   - [CLI commands](#cli-commands)
@@ -43,7 +43,7 @@ Conductor manages a fleet of AI agents defined in a single `conductor.json` file
 
 ## Features
 
-- **Single source of truth** — all agents defined in one `conductor.json`
+- **Single source of truth** — all agents defined in one `conductor.yaml`
 - **Automatic sync** — creates, retires, and restores `.agent.md` files every 15 minutes
 - **Flatpak packaging** — con-pilot runs in a sandboxed Flatpak with Python 3.14 and uv-based bootstrap
 - **Self-extracting installer** — `setup.sh` bundles everything into a single ~23 MB file
@@ -51,9 +51,10 @@ Conductor manages a fleet of AI agents defined in a single `conductor.json` file
 - **Admin key security** — system agents protected by a UUID key; conductor agent permanently locked
 - **Cron scheduling** — TOML-based per-agent cron jobs dispatched automatically
 - **Project isolation** — trust boundaries enforced via `trust.json`; agents scoped per-project
-- **HTTP API** — FastAPI service with `/health`, `/sync`, `/cron`, `/setup-env`, `/agents`, `/register`, `/retire-project`, `/validate`, `/replace`, `/reset` endpoints
-- **`conduct` CLI** — user-facing operational CLI wrapping Taskfile and the HTTP API
-- **89 tests** — 56 unit + 33 CLI integration tests, all isolated with `tmp_path` fixtures
+- **Versioned config** — `ConfigStore` tracks named configuration snapshots in `.scores/` with diff and rollback
+- **HTTP API** — FastAPI service with `/health`, `/version`, `/sync`, `/cron`, `/setup-env`, `/agents`, `/register`, `/retire-project`, `/validate`, `/replace`, `/reset`, `/config/*`, `/snapshot/*` endpoints
+- **`conduct` CLI** — user-facing operational CLI wrapping the HTTP API
+- **144 tests** — unit + CLI integration tests, all isolated with `tmp_path` fixtures
 
 ---
 
@@ -61,7 +62,7 @@ Conductor manages a fleet of AI agents defined in a single `conductor.json` file
 
 ```bash
 # 1. Install from the self-extracting setup.sh
-./setup-0.1.1.sh install ~/.conductor
+./setup-0.3.0.sh install ~/.conductor
 
 # 2. Source the environment
 source ~/.bashrc
@@ -101,7 +102,7 @@ flowchart TD
     HOME --> RUNTIME
     FP -->|"flatpak run"| API
     API -->|"sync every 15m"| AGENTS
-    API -->|"reads"| CJ["conductor.json"]
+    API -->|"reads"| CJ["conductor.yaml"]
 ```
 
 ---
@@ -114,13 +115,13 @@ The self-extracting installer bundles the Flatpak, Taskfile, agent templates, an
 
 ```bash
 # Install
-./setup-0.1.1.sh install ~/.conductor
+./setup-0.3.0.sh install ~/.conductor
 
 # Update (reads CONDUCTOR_HOME from env)
-./setup-0.1.1.sh update
+./setup-0.3.0.sh update
 
 # Uninstall
-./setup-0.1.1.sh uninstall
+./setup-0.3.0.sh uninstall
 ```
 
 On install, the admin key is displayed once and then erased. Save it — it's required for modifying system agents.
@@ -159,10 +160,10 @@ git clone https://github.com/oliben67/copilot-conductor.git
 cd copilot-conductor
 
 # Create and activate the Python virtual environment
-cd python/con-pilot
+cd src/python/con-pilot
 uv sync --all-groups
 source .venv/bin/activate
-cd ../..
+cd ../../..
 
 # Verify task is available
 task --version
@@ -234,7 +235,7 @@ dist/
 ├── setup-{version}-full-bundle.sh  # Full offline installer (~500+ MB)
 └── io.conductor.ConPilot.flatpak   # Standalone Flatpak bundle
 
-python/con-pilot/
+src/python/con-pilot/
 ├── flatpak/deps/                   # Downloaded wheel dependencies
 ├── flatpak/build-dir/              # Flatpak build directory
 └── flatpak/repo/                   # Local Flatpak repository
@@ -261,32 +262,30 @@ python -m pytest tests/ -v --cov=con_pilot --cov-report=term-missing
 `conduct` is the user-facing operational CLI. It wraps Taskfile tasks and the con-pilot HTTP API.
 
 ```
-conduct — Conductor v0.1.1  (con-pilot v0.1.0)
+conduct — Conductor v0.3.0  (con-pilot v0.3.0)
 
 Usage:
   conduct <command> [options]
 
 Service commands:
-  start                Start the con-pilot service
-  stop                 Stop the con-pilot service
-  status               Show whether con-pilot is running
-  deploy               Install/upgrade con-pilot and restart
-  sync                 Trigger a one-shot sync cycle
-  logs                 Tail the sync_agents log
-
-Build commands:
-  build [--force]      Build all Flatpak artefacts (--force = clean rebuild)
-
-Configuration commands:
-  validate [file]      Validate conductor.json against schema
+  start                      Start the con-pilot service
+  stop                       Stop the con-pilot service
+  status                     Show whether con-pilot is running
+  sync                       Trigger a one-shot sync cycle
+  logs [-n N] [-f]           Show service logs (last 10 lines; -f to follow)
+  agents [-p PROJECT] [-j]   List all agents (-j for JSON)
 
 Project commands:
-  register <name> <dir>   Register a new project
-  retire <name>           Retire a project
+  register <name> <dir>      Register a new project
+  retire <name>              Retire a project
 
 Admin commands (require --key):
-  admin replace <file> <role> [project] --key KEY
-  admin reset   <role> [project]        --key KEY
+  admin replace <file> <role> [project] --key KEY   Replace agent body with file
+  admin reset   <role> [project]        --key KEY   Reset agent(s) to defaults
+
+General:
+  version                    Show version information
+  help                       Show this help message
 ```
 
 ---
@@ -298,7 +297,7 @@ The build process (`task build`) produces a self-extracting shell script that co
 1. A bash header with `install`, `update`, `uninstall`, `version`, and `help` commands
 2. A compressed tar archive (appended after `__ARCHIVE__` marker)
 
-The archive includes the Taskfile (stripped of build tasks), Flatpak bundle, agent templates, conductor.json, cron files, and the `conduct` CLI. Dev-only files (tests, .venv, .flatpak-builder) are excluded.
+The archive includes the Taskfile (stripped of build tasks), Flatpak bundle, agent templates, conductor.yaml, cron files, and the `conduct` CLI. Dev-only files (tests, .venv, .flatpak-builder) are excluded.
 
 ```mermaid
 flowchart LR
@@ -320,7 +319,7 @@ The **Conductor** system is a multi-agent framework built on top of GitHub Copil
 
 ```mermaid
 flowchart TD
-    CF(["📄 conductor.json\nsingle source of truth"])
+    CF(["📄 conductor.yaml\nsingle source of truth"])
 
     CF -->|"con-pilot sync"| SA
     CF -->|"con-pilot sync"| PA
@@ -340,7 +339,7 @@ flowchart TD
 ```
 
 `con-pilot` is the CLI/service that:
-- **Reconciles** `.agent.md` files with `conductor.json` — creating, retiring, and restoring them automatically
+- **Reconciles** `.agent.md` files with `conductor.yaml` — creating, retiring, and restoring them automatically
 - **Dispatches** cron jobs defined per-agent in TOML cron files
 - **Manages** project registration and trust boundaries
 - **Provides** a FastAPI service for continuous background sync
@@ -376,7 +375,7 @@ flowchart TD
 graph TD
     HOME(["$CONDUCTOR_HOME/"])
 
-    HOME --> CJ["conductor.json\nagent definitions & models"]
+    HOME --> CJ["conductor.yaml\nagent definitions & models"]
     HOME --> KEY["key\nsystem GUID (auto-generated)"]
     HOME --> VER["VERSION\ninstalled version"]
     HOME --> CONDUCT["conduct\noperational CLI"]
@@ -406,50 +405,54 @@ graph TD
 
 ---
 
-## conductor.json reference
+## conductor.yaml reference
 
-```jsonc
-{
-  "models": {
-    "default_model": "claude-opus-4.6",
-    "authorized_models": ["gpt-4o", "claude-opus-4.6", ...]
-  },
-  "agent": {
-    // ── System agent (lives in .github/agents/) ────────────────────────────
-    "arbitrator": {
-      "name": "sir",                       // Copilot agent name
-      "description": "Resolves conflicts …",
-      "active": true,
-      "model": "claude-opus-4.6",
-      "scope": "system",                   // "system" | "project"
-      "has_cron_jobs": true                // enables cron file creation
-    },
+```yaml
+version:
+  number: "1.0.0"
+  description: "Initial configuration"
+  date: "2026-04-18T10:00:00+00:00"
+  notes: "Optional migration notes"
 
-    // ── Project agent with numbered instances ──────────────────────────────
-    "developer": {
-      "name": "code-monkey-[scope:project]-agent-[rank]",
-      "description": "Writes production code …",
-      "active": true,
-      "sidekick": true,                    // exported as SIDEKICK_AGENT_NAME
-      "model": "claude-opus-4.6",
-      "scope": "project",
-      "instances": { "min": 1, "max": 2 } // creates developer.{proj}.1 & .2
-    },
+models:
+  default_model: claude-opus-4.6
+  authorized_models:
+    - gpt-4o
+    - claude-opus-4.6
+    - gemini-2
+    # … additional model identifiers
 
-    // ── Single-instance project agent ──────────────────────────────────────
-    "reviewer": {
-      "name": "nosy-parker-[scope:project]",
-      "description": "Reviews PRs …",
-      "active": true,
-      "model": "claude-opus-4.6",
-      "scope": "project"
-    }
-  }
-}
+agent:
+  # ── System agent (lives in .github/agents/) ────────────────────────────────
+  arbitrator:
+    name: sir                         # Copilot agent name
+    description: Resolves conflicts …
+    active: true
+    model: claude-opus-4.6
+    scope: system                     # "system" | "project"
+    has_cron_jobs: true               # enables cron file creation
+
+  # ── Project agent with numbered instances ──────────────────────────────────
+  developer:
+    name: "code-monkey-[scope:project]-agent-[rank]"
+    description: Writes production code …
+    active: true
+    sidekick: true                    # exported as SIDEKICK_AGENT_NAME
+    model: claude-opus-4.6
+    scope: project
+    instances:
+      min: 1
+      max: 2                          # creates developer.{proj}.1 & .2
+
+  # ── Single-instance project agent ──────────────────────────────────────────
+  reviewer:
+    name: "nosy-parker-[scope:project]"
+    description: Reviews PRs …
+    active: true
+    model: claude-opus-4.6
+    scope: project
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
 | `name` | string | Copilot agent display name. Supports [placeholders](#agent-naming-templates). |
 | `description` | string | Shown as the agent's "Use when:" hint in Copilot. |
 | `active` | bool | When `false` the agent is retired and its file moved to `retired/`. |
@@ -514,7 +517,7 @@ con-pilot <command> [options]
 
 ### sync
 
-Reconcile `.agent.md` files against `conductor.json`, then dispatch due cron jobs.
+Reconcile `.agent.md` files against `conductor.yaml`, then dispatch due cron jobs.
 
 ```
 con-pilot sync
@@ -522,8 +525,8 @@ con-pilot sync
 
 ```mermaid
 flowchart LR
-    subgraph CFG["conductor.json"]
-        R1["arbitrator ✓"] 
+    subgraph CFG["conductor.yaml"]
+        R1["arbitrator ✓"]
         R2["support ✓"]
         R3["ghost ✗ removed"]
         R4["developer  max=2"]
@@ -552,7 +555,7 @@ flowchart LR
 
 - Files for **active** roles that are missing → **created** (from template if available, or generated from config)
 - Files for **active** roles that previously existed in `retired/` → **restored**
-- Files for roles that are no longer active or no longer in `conductor.json` → **moved to `retired/`**
+- Files for roles that are no longer active or no longer in `conductor.yaml` → **moved to `retired/`**
 - `conductor.agent.md` is **never modified**
 
 ---
@@ -586,7 +589,7 @@ con-pilot serve [-i SECONDS]
 | `GET` | `/health` | Returns `{"status": "ok"}` |
 | `POST` | `/sync` | Trigger a manual sync cycle |
 | `POST` | `/cron` | Trigger a manual cron dispatch |
-| `GET` | `/validate` | Validate conductor.json against schema |
+| `GET` | `/validate` | Validate conductor.yaml against schema |
 
 ---
 
@@ -694,7 +697,7 @@ If the destination already exists (e.g. a previous retirement), a timestamp suff
 
 ### amend
 
-Append or replace the `## Instructions` section in matching agent file(s).  
+Append or replace the `## Instructions` section in matching agent file(s).
 All other sections (Role, Behavior, Sidekick, etc.) are preserved.
 
 ```
@@ -749,7 +752,7 @@ Writes production code…
 - Never commit directly to main.
 ```
 
-Running `amend` a second time **replaces** the `## Instructions` block, not appends.  
+Running `amend` a second time **replaces** the `## Instructions` block, not appends.
 Multi-instance agents (`developer.1`, `developer.2`, …) are **all amended simultaneously**.
 
 ---
@@ -766,14 +769,14 @@ con-pilot replace <file> <role> [project] [--key KEY]
 con-pilot replace new-body.md reviewer my-app
 ```
 
-The frontmatter (`name:`, `model:`, `description:`, `tools:`) is preserved exactly.  
+The frontmatter (`name:`, `model:`, `description:`, `tools:`) is preserved exactly.
 Everything after the closing `---` is replaced with the file contents.
 
 ---
 
 ### reset
 
-Reset agent file(s) to their template-generated or config-generated defaults.  
+Reset agent file(s) to their template-generated or config-generated defaults.
 Any custom `## Instructions` or other additions are discarded.
 
 ```
@@ -790,7 +793,7 @@ con-pilot reset support --key $(cat $CONDUCTOR_HOME/key)
 
 Reset resolution order:
 1. Template file at `.github/agents/templates/{role}.agent.md` (preserves body, swaps name/model)
-2. Generated from `conductor.json` description + sidekick flag + behavior block
+2. Generated from `conductor.yaml` description + sidekick flag + behavior block
 
 ---
 
@@ -828,7 +831,7 @@ Commands that accept `--key`:
 
 ## Cron jobs
 
-Agents with `"has_cron_jobs": true` get a TOML cron file created during sync:
+Agents with `has_cron_jobs: true` get a TOML cron file created during sync:
 
 ```
 $CONDUCTOR_HOME/.github/agents/cron/{role}.cron        ← system agents
@@ -846,7 +849,7 @@ task     = "Summarise yesterday's commits and open PRs. Post to .github/output/s
 [[job]]
 name     = "sync-agents"
 schedule = "*/15 * * * *"
-task     = "Reconcile .github/agents/ with conductor.json."
+task     = "Reconcile .github/agents/ with conductor.yaml."
 ```
 
 ```mermaid
@@ -883,11 +886,11 @@ Copilot reads `pending.log` at session start and invokes the appropriate agent f
 
 ## Templates
 
-Place a file at `.github/agents/templates/{role}.agent.md` to customise the base content for that role.  
+Place a file at `.github/agents/templates/{role}.agent.md` to customise the base content for that role.
 `con-pilot` will use it as the starting point when creating or resetting agent files, substituting:
 
 - `name: "PLACEHOLDER"` → actual expanded name
-- `model: "PLACEHOLDER"` → default model from `conductor.json`
+- `model: "PLACEHOLDER"` → default model from `conductor.yaml`
 - `You are **PLACEHOLDER**,` → actual name in the intro line
 
 Everything else (tools, custom sections, style) is preserved verbatim.
@@ -902,7 +905,7 @@ Example: `.github/agents/templates/developer.agent.md` is used as the base for a
 |----------|--------|-------------|
 | `CONDUCTOR_HOME` | `setup-env` | Absolute path to the conductor home directory. |
 | `TRUSTED_DIRECTORIES` | `setup-env` | Colon-separated list of trusted project directories from `trust.json`. |
-| `COPILOT_DEFAULT_MODEL` | `setup-env` | Default LLM model from `conductor.json`. |
+| `COPILOT_DEFAULT_MODEL` | `setup-env` | Default LLM model from `conductor.yaml`. |
 | `CONDUCTOR_AGENT_NAME` | `setup-env` | Name of the conductor agent (e.g. `uppity`). |
 | `SIDEKICK_AGENT_NAME` | `setup-env` | Name of the sidekick agent, with project/rank expanded (e.g. `code-monkey-my-app-agent-1`). |
 | `PROJECT_NAME` | `setup-env`, `register` | Name of the current project. |
@@ -912,8 +915,10 @@ Example: `.github/agents/templates/developer.agent.md` is used as the base for a
 
 ## Running the tests
 
+### Python tests (pytest)
+
 ```bash
-cd $CONDUCTOR_HOME/python/con-pilot
+cd src/python/con-pilot
 
 # Run all tests
 python3 -m pytest tests/ -v
@@ -922,22 +927,18 @@ python3 -m pytest tests/ -v
 python3 -m pytest tests/ -v --cov=con_pilot --cov-report=term-missing
 ```
 
-The test suite uses isolated `tmp_path` fixtures — no real `$CONDUCTOR_HOME` files are touched. 89 tests (56 unit + 33 integration) cover every command and edge case.
+The test suite uses isolated `tmp_path` fixtures — no real `$CONDUCTOR_HOME` files are touched. 144 tests cover every command and edge case.
 
-```
-tests/test_con_pilot.py::TestExpandName            5 tests  — name template substitution
-tests/test_con_pilot.py::TestSplitFrontmatter      2 tests  — YAML frontmatter parsing
-tests/test_con_pilot.py::TestEnv                   5 tests  — session environment vars
-tests/test_con_pilot.py::TestSync                  8 tests  — agent reconciliation
-tests/test_con_pilot.py::TestCron                  3 tests  — cron dispatch
-tests/test_con_pilot.py::TestRegister              4 tests  — project registration
-tests/test_con_pilot.py::TestRetireProject         4 tests  — project retirement
-tests/test_con_pilot.py::TestAmendAgent            6 tests  — amend command + security
-tests/test_con_pilot.py::TestReplaceAgent          3 tests  — replace command + security
-tests/test_con_pilot.py::TestResetAgent            5 tests  — reset command + security
-tests/test_con_pilot.py::TestCli                  11 tests  — CLI dispatch for all commands
+### Bash tests (BATS)
 
-tests/test_cli_integration.py                      33 tests — end-to-end CLI via subprocess
+The installer helper functions in `src/scripts/setup.sh.functions` are covered by a [BATS](https://bats-core.readthedocs.io/) test suite:
+
+```bash
+# Install BATS (if not already available)
+npm install -g bats   # or: brew install bats-core
+
+# Run the BATS suite
+bats src/scripts/tests/setup.sh.functions.bats
 ```
 
 ---

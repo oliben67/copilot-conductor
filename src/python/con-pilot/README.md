@@ -2,7 +2,7 @@
 
 > The synchronisation engine, CLI, and HTTP API for the [Conductor](../../README.md) AI agent system.
 
-`con-pilot` is a Python 3.14 package that keeps your VS Code Copilot agent roster in sync with `conductor.json`, dispatches scheduled cron tasks, and exposes every lifecycle operation as both a CLI and a FastAPI service.
+`con-pilot` is a Python 3.14 package that keeps your VS Code Copilot agent roster in sync with `conductor.yaml`, dispatches scheduled cron tasks, and exposes every lifecycle operation as both a CLI and a FastAPI service.
 
 **Deployed as a Flatpak** (`io.conductor.ConPilot`) with uv-based bootstrap — the first run installs a sandboxed Python environment and all dependencies in under 100 ms.
 
@@ -15,7 +15,7 @@
 `con-pilot` is installed automatically by the Conductor `setup.sh` installer:
 
 ```bash
-./setup-0.1.1.sh install ~/.conductor
+./setup-0.3.0.sh install ~/.conductor
 ```
 
 This installs the Flatpak bundle, which bootstraps Python 3.14 + all dependencies on first run.
@@ -23,8 +23,9 @@ This installs the Flatpak bundle, which bootstraps Python 3.14 + all dependencie
 ### From source (development)
 
 ```bash
-cd $CONDUCTOR_HOME/python/con-pilot
-uv pip install -e ".[dev]"
+cd src/python/con-pilot
+uv sync --all-groups
+source .venv/bin/activate
 ```
 
 The `con-pilot` entry point is then available at `.venv/bin/con-pilot`.
@@ -61,20 +62,18 @@ mindmap
       register
       retire-project
     Agent editing
-      amend
       replace
       reset
 ```
 
 | Command | Description |
 |---------|-------------|
-| [`sync`](#sync) | Reconcile `.agent.md` files with `conductor.json` |
+| [`sync`](#sync) | Reconcile `.agent.md` files with `conductor.yaml` |
 | [`cron`](#cron) | Dispatch due cron jobs to `pending.log` |
 | [`serve`](#serve) | Run the FastAPI sync service |
 | [`setup-env`](#setup-env) | Print session env vars and start the watcher |
 | [`register`](#register) | Register a new project |
 | [`retire-project`](#retire-project) | Archive a project |
-| [`amend`](#amend) | Append/replace the `## Instructions` section in agent file(s) |
 | [`replace`](#replace) | Replace the full body of agent file(s) |
 | [`reset`](#reset) | Reset agent file(s) to template/default |
 
@@ -86,11 +85,11 @@ mindmap
 con-pilot sync
 ```
 
-Reads `conductor.json`, creates missing agent files, retires removed ones, and dispatches cron jobs. Idempotent — safe to run any number of times.
+Reads `conductor.yaml`, creates missing agent files, retires removed ones, and dispatches cron jobs. Idempotent — safe to run any number of times.
 
 ```mermaid
 flowchart LR
-    CF(["conductor.json"])
+    CF(["conductor.yaml"])
 
     CF --> SA["system agents\n.github/agents/"]
     CF --> PA["project agents\n.github/projects/{name}/agents/"]
@@ -131,13 +130,18 @@ flowchart TD
     SV(["con-pilot serve"])
     SV -->|"every 900 s"| S["sync()"]
     SV --> H["GET /health"]
+    SV --> VER["GET /version"]
     SV --> SE["GET /setup-env"]
+    SV --> AG["GET /agents"]
     SV --> MS["POST /sync"]
     SV --> MC["POST /cron"]
+    SV --> VAL["GET|POST /validate"]
     SV --> REG["POST /register"]
     SV --> RET["POST /retire-project"]
     SV --> REP["POST /replace"]
     SV --> RST["POST /reset"]
+    SV --> CFG["GET|POST /config/*"]
+    SV --> SNP["GET|POST /snapshot/*"]
     MS -->|manual trigger| S
     MC -->|manual trigger| C["cron()"]
 ```
@@ -145,13 +149,30 @@ flowchart TD
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | `{"status": "ok"}` |
+| `/version` | GET | Service version string |
 | `/setup-env` | GET | Resolve project context and return session env vars |
+| `/agents` | GET | List all agents (`?project=` to filter) |
 | `/sync` | POST | Trigger a manual sync cycle |
 | `/cron` | POST | Trigger a manual cron dispatch |
+| `/validate` | GET, POST | Validate `conductor.yaml` against the schema |
 | `/register` | POST | Register a new project (`name`, `directory`) |
 | `/retire-project` | POST | Retire a project (`name`) |
 | `/replace` | POST | Replace agent body (`file_content`, `role`, `project`, `key`) |
 | `/reset` | POST | Reset agent to defaults (`role`, `project`, `key`) |
+| `/config` | GET | List stored configuration versions |
+| `/config` | POST | Save a new configuration version |
+| `/config/{version}` | GET | Retrieve a specific configuration version |
+| `/config/diff` | POST | Unified diff between two stored versions |
+| `/config/{version}/diff-with-active` | GET | Diff a stored version against the active config |
+| `/config/{version}/activate` | POST | Activate a stored version (requires `X-Admin-Key`) |
+| `/config/{version}` | DELETE | Delete a stored version (requires `X-Admin-Key`) |
+| `/snapshot` | GET | List `.github` directory snapshots |
+| `/snapshot` | POST | Create a new snapshot |
+| `/snapshot/changes` | GET | Check for file changes since last snapshot |
+| `/snapshot/check-and-create` | POST | Auto-snapshot if changes detected |
+| `/snapshot/watcher` | GET | Get change-watcher status |
+| `/snapshot/watcher/start` | POST | Start the change watcher |
+| `/snapshot/watcher/stop` | POST | Stop the change watcher |
 
 ---
 
@@ -225,24 +246,6 @@ con-pilot retire-project my-app
 
 ---
 
-### amend
-
-```
-con-pilot amend <file> <role> [project] [--key KEY]
-```
-
-Appends or replaces the `## Instructions` section in all matching agent files. Every other section is left untouched. Multi-instance agents (e.g. `developer.1`, `developer.2`) are all amended at once.
-
-```bash
-# Project agent — no key needed
-con-pilot amend instructions.md developer my-app
-
-# System agent — requires the system key
-con-pilot amend instructions.md support --key $(cat $CONDUCTOR_HOME/key)
-```
-
----
-
 ### replace
 
 ```
@@ -263,7 +266,7 @@ con-pilot replace new-body.md reviewer my-app
 con-pilot reset <role> [project] [--key KEY]
 ```
 
-Regenerates matching agent files from their template (`.github/agents/templates/{role}.agent.md`) or from `conductor.json` if no template exists.
+Regenerates matching agent files from their template (`.github/agents/templates/{role}.agent.md`) or from `conductor.yaml` if no template exists.
 
 ```bash
 con-pilot reset developer my-app
@@ -276,7 +279,7 @@ con-pilot reset support --key $(cat $CONDUCTOR_HOME/key)
 
 ```mermaid
 flowchart LR
-    CMD(["amend / replace / reset"])
+    CMD(["replace / reset"])
     CMD --> R{"role scope?"}
     R -->|"conductor"| BLK["🚫 always blocked"]
     R -->|"system\nsupport / arbitrator"| K{"--key correct?"}
@@ -285,25 +288,27 @@ flowchart LR
     K -->|no / missing| ERR["❌ ValueError"]
 ```
 
-- **Conductor** (`conductor.agent.md`) is permanently blocked from modification via `amend`, `replace`, or `reset`.
+- **Conductor** (`conductor.agent.md`) is permanently blocked from modification via `replace` or `reset`.
 - **System agents** (`scope: system`) require `--key $(cat $CONDUCTOR_HOME/key)`.
 - **Project agents** (`scope: project`) require no key.
 
 The system key is a UUID auto-generated on first use and stored at `$CONDUCTOR_HOME/key`.
+
+Config management endpoints (`/config/{version}/activate`, `DELETE /config/{version}`) require an `X-Admin-Key` header.
 
 ---
 
 ## Development
 
 ```bash
-# Run the full test suite (89 tests: 56 unit + 33 CLI integration)
+# Run the full test suite (144 tests)
 python3 -m pytest tests/ -v
 
 # With coverage
 python3 -m pytest tests/ -v --cov=con_pilot --cov-report=term-missing
 
-# Lint + format
-ruff check src/ && ruff format src/
+# Lint + format (via uv)
+uv run ruff check src/ && uv run ruff format src/
 
 # Build the Flatpak (from the repo root)
 CONDUCTOR_HOME=$(pwd) task build
