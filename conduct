@@ -543,7 +543,7 @@ case "$1" in
   stop)      shift; cmd_stop "$@" ;;
   status)    shift; cmd_status "$@" ;;
   sync)      shift; cmd_sync "$@" ;;
-  logs)      shift; cmd_logs "$@" ;;
+  logs|log)  shift; cmd_logs "$@" ;;
   agents)    shift; cmd_agents "$@" ;;
   register)  shift; cmd_register "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
