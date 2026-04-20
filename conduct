@@ -332,16 +332,22 @@ cmd_status() {
       -h|--help) usage_status; exit 0 ;;
     esac
   done
-  local health version
+  local health version_resp
   health=$(curl -sf --connect-timeout 2 --max-time 2 "${BASE_URL}/health" 2>/dev/null) || true
-  version=$(curl -sf --connect-timeout 2 --max-time 2 "${BASE_URL}/version" 2>/dev/null) || true
+  version_resp=$(curl -sf --connect-timeout 2 --max-time 2 "${BASE_URL}/version" 2>/dev/null) || true
   if [[ -z "$health" ]]; then
     echo "con-pilot is NOT running (no response from ${BASE_URL})."
     exit 1
   fi
   local status_val version_val
-  status_val=$(printf '%s' "$health"  | sed 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-  version_val=$(printf '%s' "$version" | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+  status_val=$(printf '%s' "$health" | sed 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+  version_val=$(printf '%s' "$version_resp" | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+  # Fall back to VERSION file if the endpoint is absent (older Flatpak build)
+  if [[ -z "$version_val" || "$version_val" == "$version_resp" ]]; then
+    version_val="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null \
+      || cat "${CONDUCTOR_HOME:-$HOME/.conductor}/VERSION" 2>/dev/null \
+      || echo 'unknown')"
+  fi
   echo "Status:  ${status_val:-unknown}"
   echo "Version: ${version_val:-unknown}"
   echo "URL:     ${BASE_URL}"
