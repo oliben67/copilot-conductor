@@ -663,6 +663,8 @@ tasks:
       - |
         set -e
         VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
+        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conductor-cli/VERSION' | tr -d '[:space:]')"
+        CONDUCTOR_HOME_VERSION="$(cat '{{.ROOT_DIR}}/src/vscode/conduct-lectern/VERSION' 2>/dev/null | tr -d '[:space:]' || echo '0.0.0')"
         RELEASES_DIR="{{.ROOT_DIR}}/releases/v${VERSION}"
         mkdir -p "$RELEASES_DIR"
 
@@ -678,6 +680,13 @@ tasks:
             -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \
             "$TEMPLATE" > "$NOTES_FILE"
 
+        # Update releases-details.json
+        DETAILS_FILE="{{.ROOT_DIR}}/releases/releases-details.json"
+        ENTRY="{\"conduct\": \"${CONDUCTOR_CLI_VERSION}\", \"con-pilot\": \"${VERSION}\", \"conduct-lectern\": \"${CONDUCTOR_HOME_VERSION}\"}"
+        jq --arg key "v${VERSION}" --argjson val "$(echo $ENTRY)" '. + {($key): $val}' "$DETAILS_FILE" > "${DETAILS_FILE}.tmp"
+        mv "${DETAILS_FILE}.tmp" "$DETAILS_FILE"
+        echo "Updated releases-details.json for v${VERSION}"
+
         echo ""
         echo "Release v${VERSION} artifacts saved to releases/v${VERSION}/:"
         ls -lh "$RELEASES_DIR/"
@@ -692,6 +701,8 @@ tasks:
       - |
         set -e
         VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
+        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conductor-cli/VERSION' | tr -d '[:space:]')"
+        CONDUCTOR_HOME_VERSION="$(cat '{{.ROOT_DIR}}/src/vscode/conduct-lectern/VERSION' 2>/dev/null | tr -d '[:space:]' || echo '0.0.0')"
         RELEASES_DIR="{{.ROOT_DIR}}/releases/v${VERSION}"
         mkdir -p "$RELEASES_DIR"
 
@@ -707,6 +718,13 @@ tasks:
         sed -e "s/__VERSION__/${VERSION}/g" \
             -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \
             "$TEMPLATE" > "$NOTES_FILE"
+
+        # Update releases-details.json
+        DETAILS_FILE="{{.ROOT_DIR}}/releases/releases-details.json"
+        ENTRY="{\"conduct\": \"${CONDUCTOR_CLI_VERSION}\", \"con-pilot\": \"${VERSION}\", \"conduct-lectern\": \"${CONDUCTOR_HOME_VERSION}\"}"
+        jq --arg key "v${VERSION}" --argjson val "$(echo $ENTRY)" '. + {($key): $val}' "$DETAILS_FILE" > "${DETAILS_FILE}.tmp"
+        mv "${DETAILS_FILE}.tmp" "$DETAILS_FILE"
+        echo "Updated releases-details.json for v${VERSION}"
 
         echo ""
         echo "Release v${VERSION} artifacts saved to releases/v${VERSION}/:"
