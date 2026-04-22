@@ -66,9 +66,9 @@
     "test": "npm run compile:check && npm run lint && npm run test:unit && npm run test:integration",
     "test:ci": "npm run compile:check && npm run lint && npm run test:unit",
     "build": "rimraf dist && npm run compile",
-    "clean": "rimraf dist releases/*.vsix",
-    "package": "npm run build && vsce package --out releases/",
-    "deploy": "code --install-extension releases/conductor-home-$(node -p \"require('./package.json').version\").vsix"
+    "clean": "rimraf dist",
+    "package": "npm run build && vsce package --out $(git rev-parse --show-toplevel)/releases/v$(node -p \"require('./package.json').version\")/",
+    "deploy": "code --install-extension $(git rev-parse --show-toplevel)/releases/v$(node -p \"require('./package.json').version\")/conductor-home-$(node -p \"require('./package.json').version\").vsix"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

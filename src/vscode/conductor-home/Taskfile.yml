@@ -2,11 +2,14 @@ version: "3"
 
 vars:
   EXT_DIR: "{{.ROOT_DIR}}"
-  RELEASES_DIR: "{{.EXT_DIR}}/releases"
+  WORKSPACE_ROOT:
+    sh: git -C "{{.ROOT_DIR}}" rev-parse --show-toplevel
+  RELEASES_DIR: "{{.WORKSPACE_ROOT}}/releases"
   VERSION:
     sh: node -p "require('{{.EXT_DIR}}/package.json').version"
   VSIX_NAME: "conductor-home-{{.VERSION}}.vsix"
-  VSIX_PATH: "{{.RELEASES_DIR}}/{{.VSIX_NAME}}"
+  VERSIONED_DIR: "{{.RELEASES_DIR}}/v{{.VERSION}}"
+  VSIX_PATH: "{{.VERSIONED_DIR}}/{{.VSIX_NAME}}"
 
 tasks:
   # ── Dependencies ────────────────────────────────────────────────────────────
@@ -104,10 +107,12 @@ tasks:
   # ── Package ─────────────────────────────────────────────────────────────────
 
   package:
-    desc: Build and package the extension as a .vsix into releases/.
+    desc: Build and package the extension as a .vsix into releases/vX.Y.Z/.
+    deps: [submodule:init]
     cmds:
-      - mkdir -p {{.RELEASES_DIR}}
-      - npm run package
+      - mkdir -p {{.VERSIONED_DIR}}
+      - task: build
+      - node_modules/.bin/vsce package --out {{.VERSIONED_DIR}}/
     generates:
       - "{{.VSIX_PATH}}"
 
@@ -133,13 +138,12 @@ tasks:
       Commit and push the current VSIX to copilot-conductor-releases.
       README.md is a local symlink to the root README; this task replaces it
       with a real copy before committing, pushes, then restores the symlink.
-    vars:
-      ROOT_README: "{{.ROOT_DIR}}/../../../README.md"
+    deps: [package]
     cmds:
       - |
         set -e
         RELEASES="{{.RELEASES_DIR}}"
-        ROOT_README="{{.EXT_DIR}}/../../../README.md"
+        ROOT_README="{{.WORKSPACE_ROOT}}/README.md"
         cd "$RELEASES"
 
         # Replace symlink with a real copy for the commit
@@ -152,12 +156,52 @@ tasks:
 
         # Restore the symlink locally
         rm README.md
-        ln -s ../../../../README.md README.md
+        ln -s ../README.md README.md
       - |
         # Update the submodule pointer in the parent repo
-        cd "{{.EXT_DIR}}"
-        git add releases
-        git diff --cached --quiet releases || git -C "{{.EXT_DIR}}" commit -m "chore: update conductor-home releases submodule to {{.VERSION}}"
+        git -C "{{.WORKSPACE_ROOT}}" add releases
+        git -C "{{.WORKSPACE_ROOT}}" diff --cached --quiet releases || \
+          git -C "{{.WORKSPACE_ROOT}}" commit -m "chore: update conductor-home releases submodule to {{.VERSION}}"
+
+  # ── Submodule Management ─────────────────────────────────────────────────────
+
+  submodule:init:
+    desc: "Init the releases submodule in the workspace root (if not yet done)."
+    cmds:
+      - |
+        set -e
+        RELEASES="{{.WORKSPACE_ROOT}}/releases"
+        if [ ! -f "$RELEASES/.git" ]; then
+          echo "Initialising releases submodule…"
+          git -C "{{.WORKSPACE_ROOT}}" submodule update --init --recursive releases
+        else
+          echo "Submodule already initialised ($(git -C "$RELEASES" rev-parse --short HEAD 2>/dev/null))."
+        fi
+
+  submodule:sync:
+    desc: "Pull the latest commits from the releases submodule remote."
+    deps: [submodule:init]
+    cmds:
+      - |
+        set -e
+        echo "Syncing releases submodule…"
+        git -C "{{.WORKSPACE_ROOT}}" submodule update --remote --merge releases
+        echo "Submodule now at $(git -C "{{.WORKSPACE_ROOT}}/releases" rev-parse --short HEAD)."
+
+  submodule:reset:
+    desc: "Reset releases submodule to the commit recorded in the parent repo."
+    deps: [submodule:init]
+    cmds:
+      - |
+        set -e
+        echo "Resetting releases submodule to parent-recorded commit…"
+        git -C "{{.WORKSPACE_ROOT}}" submodule update --init --force releases
+        echo "Reset to $(git -C "{{.WORKSPACE_ROOT}}/releases" rev-parse --short HEAD)."
+
+  submodule:status:
+    desc: "Show the current state of the releases submodule."
+    cmds:
+      - git -C "{{.WORKSPACE_ROOT}}" submodule status releases
 
   # ── CI ──────────────────────────────────────────────────────────────────────
 

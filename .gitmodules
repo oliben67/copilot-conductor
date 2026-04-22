@@ -1,3 +1,3 @@
-[submodule "src/vscode/conductor-home/releases"]
-	path = src/vscode/conductor-home/releases
+[submodule "releases"]
+	path = releases
 	url = git@github.com:oliben67/copilot-conductor-releases.git

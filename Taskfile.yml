@@ -709,3 +709,45 @@ tasks:
         ls -lh "$RELEASES_DIR/"
         echo ""
         echo "NOTE: Edit $NOTES_FILE to add version-specific changes."
+
+  # ── Submodule Management ─────────────────────────────────────────────────────
+
+  submodule:init:
+    desc: "Register and checkout the releases submodule if it is not yet initialised."
+    cmds:
+      - |
+        set -e
+        RELEASES="{{.ROOT_DIR}}/releases"
+        if [ ! -f "$RELEASES/.git" ]; then
+          echo "Initialising releases submodule…"
+          git -C "{{.ROOT_DIR}}" submodule update --init --recursive releases
+        else
+          echo "Submodule already initialised ($(git -C "$RELEASES" rev-parse --short HEAD 2>/dev/null))."
+        fi
+
+  submodule:sync:
+    desc: "Pull the latest commits from the releases submodule remote (fast-forward only)."
+    deps: [submodule:init]
+    cmds:
+      - |
+        set -e
+        RELEASES="{{.ROOT_DIR}}/releases"
+        echo "Syncing releases submodule…"
+        git -C "{{.ROOT_DIR}}" submodule update --remote --merge releases
+        echo "Submodule now at $(git -C "$RELEASES" rev-parse --short HEAD)."
+
+  submodule:reset:
+    desc: "Reset the releases submodule to the commit recorded in the parent repo (discard local changes)."
+    deps: [submodule:init]
+    cmds:
+      - |
+        set -e
+        RELEASES="{{.ROOT_DIR}}/releases"
+        echo "Resetting releases submodule to parent-recorded commit…"
+        git -C "{{.ROOT_DIR}}" submodule update --init --force releases
+        echo "Reset to $(git -C "$RELEASES" rev-parse --short HEAD)."
+
+  submodule:status:
+    desc: "Show the current state of the releases submodule."
+    cmds:
+      - git -C "{{.ROOT_DIR}}" submodule status releases
