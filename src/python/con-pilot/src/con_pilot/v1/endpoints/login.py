@@ -16,11 +16,15 @@ class LoginRequest(BaseModel):
     """Accepted body shapes:
     - ``{"username": "...", "password": "..."}``
     - ``{"token": "..."}``  (validates an existing JWT and returns a fresh one)
+
+    ``session_id`` is optional in both cases; when supplied it is embedded in
+    the JWT claims and echoed back in the response.
     """
 
     username: str | None = None
     password: str | None = None
     token: str | None = None
+    session_id: str | None = None
 
     @model_validator(mode="after")
     def _check_fields(self) -> "LoginRequest":
@@ -37,6 +41,7 @@ class TokenResponse(BaseModel):
     token: str
     token_type: str = "bearer"
     expires_in: int
+    session_id: str | None = None
 
 
 @router.post("/login", response_model=TokenResponse, status_code=status.HTTP_200_OK)
@@ -60,6 +65,8 @@ def login(body: LoginRequest) -> TokenResponse:
                 headers={"WWW-Authenticate": "Bearer"},
             ) from exc
         subject = claims.get("sub", "unknown")
+        # Carry forward the session_id from the original token unless overridden
+        session_id = body.session_id or claims.get("sid")
     else:
         if not check_credentials(body.username, body.password):  # type: ignore[arg-type]
             raise HTTPException(
@@ -68,6 +75,8 @@ def login(body: LoginRequest) -> TokenResponse:
                 headers={"WWW-Authenticate": "Bearer"},
             )
         subject = body.username  # type: ignore[assignment]
+        session_id = body.session_id
 
-    token, expires_in = issue_token(subject)
-    return TokenResponse(token=token, expires_in=expires_in)
+    extra = {"sid": session_id} if session_id else None
+    token, expires_in = issue_token(subject, extra=extra)
+    return TokenResponse(token=token, expires_in=expires_in, session_id=session_id)
