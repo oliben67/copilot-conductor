@@ -7,8 +7,10 @@ vars:
   RELEASES_DIR: "{{.WORKSPACE_ROOT}}/releases"
   VERSION:
     sh: cat "{{.EXT_DIR}}/VERSION" | tr -d '[:space:]'
+  CON_PILOT_VERSION:
+    sh: cat "{{.WORKSPACE_ROOT}}/src/python/con-pilot/VERSION" | tr -d '[:space:]'
   VSIX_NAME: "conduct-lectern-{{.VERSION}}.vsix"
-  VERSIONED_DIR: "{{.RELEASES_DIR}}/v{{.VERSION}}"
+  VERSIONED_DIR: "{{.RELEASES_DIR}}/v{{.CON_PILOT_VERSION}}"
   VSIX_PATH: "{{.VERSIONED_DIR}}/{{.VSIX_NAME}}"
 
 tasks:

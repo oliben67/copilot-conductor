@@ -535,11 +535,12 @@ tasks:
       - |
         set -e
         VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
+        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conductor-cli/VERSION' | tr -d '[:space:]')"
         BUILD_DATE="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
         DIST_DIR="{{.ROOT_DIR}}/dist"
         mkdir -p "$DIST_DIR"
 
-        echo "Packaging Conductor v${VERSION}…"
+        echo "Packaging Conductor v${VERSION} (conductor-cli v${CONDUCTOR_CLI_VERSION})…"
 
         # Strip "Running the tests" section from README for deployment
         DEPLOY_README="$(mktemp)"
@@ -578,6 +579,7 @@ tasks:
         sed \
           -e "s|__VERSION__|${VERSION}|g" \
           -e "s|__CON_PILOT_VERSION__|${CP_VERSION}|g" \
+          -e "s|__CONDUCTOR_CLI_VERSION__|${CONDUCTOR_CLI_VERSION}|g" \
           -e "s|__BUILD_DATE__|${BUILD_DATE}|g" \
           "$TMPHEADER" > "$SETUP"
         rm -f "$TMPHEADER"
@@ -594,6 +596,7 @@ tasks:
       - |
         set -e
         VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
+        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conductor-cli/VERSION' | tr -d '[:space:]')"
         BUILD_DATE="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
         DIST_DIR="{{.ROOT_DIR}}/dist"
         mkdir -p "$DIST_DIR"
@@ -638,6 +641,7 @@ tasks:
         sed \
           -e "s|__VERSION__|${VERSION}|g" \
           -e "s|__CON_PILOT_VERSION__|${CP_VERSION}|g" \
+          -e "s|__CONDUCTOR_CLI_VERSION__|${CONDUCTOR_CLI_VERSION}|g" \
           -e "s|__BUILD_DATE__|${BUILD_DATE}|g" \
           -e "s|__RUNTIME_VERSION__|{{.RUNTIME_VERSION}}|g" \
           -e "s|__UV_VERSION__|{{.UV_VERSION}}|g" \

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ── Conductor Self-Extracting Installer ───────────────────────────────────────
-# Version: __VERSION__
-# Built:   __BUILD_DATE__
+# Version:           __VERSION__
+# Conductor-CLI:     __CONDUCTOR_CLI_VERSION__
+# Built:             __BUILD_DATE__
 # Usage:   ./setup.sh install | update
 set -euo pipefail
 
