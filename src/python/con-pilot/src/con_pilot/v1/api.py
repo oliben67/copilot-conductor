@@ -16,6 +16,7 @@ from con_pilot.v1.endpoints import (
     agents_router,
     config_router,
     health_router,
+    login_router,
     projects_router,
     snapshot_router,
     sync_router,
@@ -33,6 +34,7 @@ _pilot: ConPilot | None = None
 # Main router combining all endpoint routers
 router = APIRouter()
 router.include_router(health_router)
+router.include_router(login_router)
 router.include_router(agents_router)
 router.include_router(config_router)
 router.include_router(snapshot_router)
