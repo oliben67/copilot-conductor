@@ -21,6 +21,31 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "conductor",
+          "title": "Conductor",
+          "icon": "icons/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "conductor": [
+        {
+          "id": "conductor.homeView",
+          "name": "Home",
+          "icon": "icons/activitybar.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "conductor.homeView",
+        "contents": "Conductor home directory is not yet configured.\n[Select Home Directory](command:conductor.selectHome)",
+        "when": "!conductor.homeExists"
+      }
+    ],
     "configuration": {
       "title": "Conductor",
       "properties": {
@@ -51,6 +76,12 @@
           "light": "icons/light/icon.svg",
           "dark": "icons/dark/icon.svg"
         }
+      },
+      {
+        "command": "conductor.refreshHomeView",
+        "title": "Refresh",
+        "category": "Conductor",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -60,6 +91,23 @@
         },
         {
           "command": "conductor.selectHome"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "conductor.openHome",
+          "when": "view == conductor.homeView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "conductor.selectHome",
+          "when": "view == conductor.homeView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "conductor.refreshHomeView",
+          "when": "view == conductor.homeView",
+          "group": "navigation@3"
         }
       ]
     }
