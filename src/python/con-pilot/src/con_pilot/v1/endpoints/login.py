@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, model_validator
 
 from con_pilot.jwt_auth import check_credentials, issue_token, verify_token
+from con_pilot.session_id import SessionIdField
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class LoginRequest(BaseModel):
     username: str | None = None
     password: str | None = None
     token: str | None = None
-    session_id: str | None = None
+    session_id: SessionIdField = None
 
     @model_validator(mode="after")
     def _check_fields(self) -> "LoginRequest":
@@ -41,7 +42,7 @@ class TokenResponse(BaseModel):
     token: str
     token_type: str = "bearer"
     expires_in: int
-    session_id: str | None = None
+    session_id: SessionIdField = None
 
 
 @router.post("/login", response_model=TokenResponse, status_code=status.HTTP_200_OK)

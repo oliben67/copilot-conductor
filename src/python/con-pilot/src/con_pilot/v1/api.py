@@ -20,6 +20,7 @@ from con_pilot.v1.endpoints import (
     projects_router,
     snapshot_router,
     sync_router,
+    users_router,
     validation_router,
 )
 
@@ -35,6 +36,7 @@ _pilot: ConPilot | None = None
 router = APIRouter()
 router.include_router(health_router)
 router.include_router(login_router)
+router.include_router(users_router)
 router.include_router(agents_router)
 router.include_router(config_router)
 router.include_router(snapshot_router)

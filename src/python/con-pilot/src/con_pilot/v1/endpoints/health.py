@@ -4,13 +4,18 @@ from importlib.metadata import version
 
 from fastapi import APIRouter
 
+from con_pilot.session_id import SessionIdField
+
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
-def health() -> dict:
+def health(session_id: SessionIdField = None) -> dict:
     """Return service health status."""
-    return {"status": "ok"}
+    result: dict = {"status": "ok"}
+    if session_id is not None:
+        result["session_id"] = session_id
+    return result
 
 
 @router.get("/version")
