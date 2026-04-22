@@ -931,14 +931,14 @@ The test suite uses isolated `tmp_path` fixtures — no real `$CONDUCTOR_HOME` f
 
 ### Bash tests (BATS)
 
-The installer helper functions in `src/conductor-cli/setup.sh.functions` are covered by a [BATS](https://bats-core.readthedocs.io/) test suite:
+The installer helper functions in `src/conduct-cli/setup.sh.functions` are covered by a [BATS](https://bats-core.readthedocs.io/) test suite:
 
 ```bash
 # Install BATS (if not already available)
 npm install -g bats   # or: brew install bats-core
 
 # Run the BATS suite
-bats src/conductor-cli/tests/setup.sh.functions.bats
+bats src/conduct-cli/tests/setup.sh.functions.bats
 ```
 
 ---

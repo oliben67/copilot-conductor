@@ -161,11 +161,11 @@ tasks:
         RELEASES="{{.RELEASES_DIR}}"
         ROOT_README="{{.WORKSPACE_ROOT}}/README.md"
         DETAILS_FILE="$RELEASES/releases-details.json"
-        CONDUCTOR_CLI_VERSION="$(cat '{{.WORKSPACE_ROOT}}/src/conductor-cli/VERSION' | tr -d '[:space:]')"
+        CONDUCTOR_CLI_VERSION="$(cat '{{.WORKSPACE_ROOT}}/src/conduct-cli/VERSION' | tr -d '[:space:]')"
         cd "$RELEASES"
 
         # Update releases-details.json with current component versions
-        ENTRY="{\"conduct\": \"${CONDUCTOR_CLI_VERSION}\", \"con-pilot\": \"{{.CON_PILOT_VERSION}}\", \"conduct-lectern\": \"{{.VERSION}}\"}"
+        ENTRY="{\"conduct-cli\": \"${CONDUCTOR_CLI_VERSION}\", \"con-pilot\": \"{{.CON_PILOT_VERSION}}\", \"conduct-lectern\": \"{{.VERSION}}\"}"
         jq --arg key "v{{.CON_PILOT_VERSION}}" --argjson val "$ENTRY" '. + {($key): $val}' "$DETAILS_FILE" > "${DETAILS_FILE}.tmp"
         mv "${DETAILS_FILE}.tmp" "$DETAILS_FILE"
         echo "Updated releases-details.json for v{{.CON_PILOT_VERSION}}"

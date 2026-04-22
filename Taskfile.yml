@@ -19,7 +19,7 @@ vars:
     sh: cat "{{.ROOT_DIR}}/src/python/con-pilot/VERSION" | tr -d '[:space:]'
   # Per-application versions
   CONDUCTOR_CLI_VERSION:
-    sh: cat "{{.ROOT_DIR}}/src/conductor-cli/VERSION" | tr -d '[:space:]'
+    sh: cat "{{.ROOT_DIR}}/src/conduct-cli/VERSION" | tr -d '[:space:]'
   CONDUCTOR_HOME_VERSION:
     sh: cat "{{.ROOT_DIR}}/src/vscode/conduct-lectern/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "0.0.0"
   APPIMAGE_BUNDLE: "{{.CON_PILOT_DIR}}/dist/con-pilot-{{.VERSION}}-x86_64.AppImage"
@@ -71,7 +71,7 @@ tasks:
           cp "{{.ROOT_DIR}}/conductor.yaml"             "{{.CONDUCTOR_HOME}}/conductor.yaml"
           cp "{{.ROOT_DIR}}/README.md"                  "{{.CONDUCTOR_HOME}}/README.md"
           cp "{{.ROOT_DIR}}/conduct"                    "{{.CONDUCTOR_HOME}}/conduct"
-          cp "{{.ROOT_DIR}}/src/conductor-cli/uninstall-conductor.sh"   "{{.CONDUCTOR_HOME}}/uninstall-conductor.sh"
+          cp "{{.ROOT_DIR}}/src/conduct-cli/uninstall-conductor.sh"   "{{.CONDUCTOR_HOME}}/uninstall-conductor.sh"
           chmod +x "{{.CONDUCTOR_HOME}}/conduct" "{{.CONDUCTOR_HOME}}/uninstall-conductor.sh"
           rsync -a --exclude='.not-deployed' "{{.ROOT_DIR}}/.github/" "{{.CONDUCTOR_HOME}}/.github/"
           # Install bash completion
@@ -323,7 +323,7 @@ tasks:
   test:bats:
     desc: Run BATS shell function tests.
     cmds:
-      - bats {{.ROOT_DIR}}/src/conductor-cli/tests/
+      - bats {{.ROOT_DIR}}/src/conduct-cli/tests/
 
   test:pytest:
     desc: Run the Python test suite with pytest.
@@ -535,7 +535,7 @@ tasks:
       - |
         set -e
         VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
-        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conductor-cli/VERSION' | tr -d '[:space:]')"
+        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conduct-cli/VERSION' | tr -d '[:space:]')"
         BUILD_DATE="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
         DIST_DIR="{{.ROOT_DIR}}/dist"
         mkdir -p "$DIST_DIR"
@@ -556,7 +556,7 @@ tasks:
         cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
         cp "{{.CON_PILOT_DIR}}/VERSION"         "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
-        cp "{{.ROOT_DIR}}/src/conductor-cli/uninstall-conductor.sh"         "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/conduct-cli/uninstall-conductor.sh"         "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conductor.yaml"       "$STAGING/conductor/"
         cp "{{.CON_PILOT_DIR}}/dist/con-pilot-${VERSION}-x86_64.AppImage" "$STAGING/conductor/con-pilot.AppImage"
         rsync -a --exclude='.not-deployed' "{{.ROOT_DIR}}/.github/" "$STAGING/conductor/.github/"
@@ -571,11 +571,11 @@ tasks:
         TMPHEADER="$(mktemp)"
         while IFS= read -r line; do
           if [[ "$line" == "# __FUNCTIONS__" ]]; then
-            cat '{{.ROOT_DIR}}/src/conductor-cli/setup.sh.functions'
+            cat '{{.ROOT_DIR}}/src/conduct-cli/setup.sh.functions'
           else
             printf '%s\n' "$line"
           fi
-        done < '{{.ROOT_DIR}}/src/conductor-cli/setup.sh.header' > "$TMPHEADER"
+        done < '{{.ROOT_DIR}}/src/conduct-cli/setup.sh.header' > "$TMPHEADER"
         sed \
           -e "s|__VERSION__|${VERSION}|g" \
           -e "s|__CON_PILOT_VERSION__|${CP_VERSION}|g" \
@@ -596,7 +596,7 @@ tasks:
       - |
         set -e
         VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
-        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conductor-cli/VERSION' | tr -d '[:space:]')"
+        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conduct-cli/VERSION' | tr -d '[:space:]')"
         BUILD_DATE="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
         DIST_DIR="{{.ROOT_DIR}}/dist"
         mkdir -p "$DIST_DIR"
@@ -617,7 +617,7 @@ tasks:
         cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/src/python/con-pilot/VERSION" "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
-        cp "{{.ROOT_DIR}}/src/conductor-cli/uninstall-conductor.sh" "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/conduct-cli/uninstall-conductor.sh" "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conductor.yaml"       "$STAGING/conductor/"
         cp "{{.CON_PILOT_DIR}}/dist/io.conductor.ConPilot.flatpak" "$STAGING/conductor/python/con-pilot/dist/"
 
@@ -633,11 +633,11 @@ tasks:
         TMPHEADER="$(mktemp)"
         while IFS= read -r line; do
           if [[ "$line" == "# __FUNCTIONS__" ]]; then
-            cat '{{.ROOT_DIR}}/src/conductor-cli/setup.sh.functions'
+            cat '{{.ROOT_DIR}}/src/conduct-cli/setup.sh.functions'
           else
             printf '%s\n' "$line"
           fi
-        done < '{{.ROOT_DIR}}/src/conductor-cli/setup.sh.header.full' > "$TMPHEADER"
+        done < '{{.ROOT_DIR}}/src/conduct-cli/setup.sh.header.full' > "$TMPHEADER"
         sed \
           -e "s|__VERSION__|${VERSION}|g" \
           -e "s|__CON_PILOT_VERSION__|${CP_VERSION}|g" \
@@ -663,7 +663,7 @@ tasks:
       - |
         set -e
         VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
-        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conductor-cli/VERSION' | tr -d '[:space:]')"
+        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conduct-cli/VERSION' | tr -d '[:space:]')"
         CONDUCTOR_HOME_VERSION="$(cat '{{.ROOT_DIR}}/src/vscode/conduct-lectern/VERSION' 2>/dev/null | tr -d '[:space:]' || echo '0.0.0')"
         RELEASES_DIR="{{.ROOT_DIR}}/releases/v${VERSION}"
         mkdir -p "$RELEASES_DIR"
@@ -674,7 +674,7 @@ tasks:
         # Generate release notes from template
         RELEASE_DATE="$(date '+%B %d, %Y')"
         NOTES_FILE="$RELEASES_DIR/release-notes-${VERSION}.md"
-        TEMPLATE="{{.ROOT_DIR}}/src/conductor-cli/release-notes.template.md"
+        TEMPLATE="{{.ROOT_DIR}}/src/conduct-cli/release-notes.template.md"
 
         sed -e "s/__VERSION__/${VERSION}/g" \
             -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \
@@ -682,7 +682,7 @@ tasks:
 
         # Update releases-details.json
         DETAILS_FILE="{{.ROOT_DIR}}/releases/releases-details.json"
-        ENTRY="{\"conduct\": \"${CONDUCTOR_CLI_VERSION}\", \"con-pilot\": \"${VERSION}\", \"conduct-lectern\": \"${CONDUCTOR_HOME_VERSION}\"}"
+        ENTRY="{\"conduct-cli\": \"${CONDUCTOR_CLI_VERSION}\", \"con-pilot\": \"${VERSION}\", \"conduct-lectern\": \"${CONDUCTOR_HOME_VERSION}\"}"
         jq --arg key "v${VERSION}" --argjson val "$(echo $ENTRY)" '. + {($key): $val}' "$DETAILS_FILE" > "${DETAILS_FILE}.tmp"
         mv "${DETAILS_FILE}.tmp" "$DETAILS_FILE"
         echo "Updated releases-details.json for v${VERSION}"
@@ -701,7 +701,7 @@ tasks:
       - |
         set -e
         VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
-        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conductor-cli/VERSION' | tr -d '[:space:]')"
+        CONDUCTOR_CLI_VERSION="$(cat '{{.ROOT_DIR}}/src/conduct-cli/VERSION' | tr -d '[:space:]')"
         CONDUCTOR_HOME_VERSION="$(cat '{{.ROOT_DIR}}/src/vscode/conduct-lectern/VERSION' 2>/dev/null | tr -d '[:space:]' || echo '0.0.0')"
         RELEASES_DIR="{{.ROOT_DIR}}/releases/v${VERSION}"
         mkdir -p "$RELEASES_DIR"
@@ -713,7 +713,7 @@ tasks:
         # Generate release notes from template
         RELEASE_DATE="$(date '+%B %d, %Y')"
         NOTES_FILE="$RELEASES_DIR/release-notes-${VERSION}.md"
-        TEMPLATE="{{.ROOT_DIR}}/src/conductor-cli/release-notes-full.template.md"
+        TEMPLATE="{{.ROOT_DIR}}/src/conduct-cli/release-notes-full.template.md"
 
         sed -e "s/__VERSION__/${VERSION}/g" \
             -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \
@@ -721,7 +721,7 @@ tasks:
 
         # Update releases-details.json
         DETAILS_FILE="{{.ROOT_DIR}}/releases/releases-details.json"
-        ENTRY="{\"conduct\": \"${CONDUCTOR_CLI_VERSION}\", \"con-pilot\": \"${VERSION}\", \"conduct-lectern\": \"${CONDUCTOR_HOME_VERSION}\"}"
+        ENTRY="{\"conduct-cli\": \"${CONDUCTOR_CLI_VERSION}\", \"con-pilot\": \"${VERSION}\", \"conduct-lectern\": \"${CONDUCTOR_HOME_VERSION}\"}"
         jq --arg key "v${VERSION}" --argjson val "$(echo $ENTRY)" '. + {($key): $val}' "$DETAILS_FILE" > "${DETAILS_FILE}.tmp"
         mv "${DETAILS_FILE}.tmp" "$DETAILS_FILE"
         echo "Updated releases-details.json for v${VERSION}"
