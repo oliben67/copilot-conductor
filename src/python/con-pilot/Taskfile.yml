@@ -13,6 +13,12 @@ env:
 tasks:
   # ── Dependencies ────────────────────────────────────────────────────────────
 
+  build:
+    desc: Run install + tests for con-pilot.
+    cmds:
+      - task: install
+      - task: test
+
   install:
     desc: Install all dependencies (including dev) into the venv.
     cmds:
@@ -75,4 +81,4 @@ tasks:
   start:
     desc: Start con-pilot in production mode via con-pilot serve.
     cmds:
-      - "{{.CON_PILOT}} serve {{.CLI_ARGS}}"
+      - "CON_PILOT_DEV_SHOW_ME=1 {{.CON_PILOT}} serve {{.CLI_ARGS}}"

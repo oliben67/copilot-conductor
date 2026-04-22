@@ -108,6 +108,7 @@ install_appimage() {
   fi
 
   chmod +x "$appimage"
+  rm -f "${conductor_home}/key"
   echo "AppImage ready at ${appimage}."
 }
 

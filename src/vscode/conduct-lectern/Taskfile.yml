@@ -19,7 +19,12 @@ tasks:
   install:
     desc: Install all npm dependencies (including dev).
     cmds:
-      - npm ci
+      - |
+        if [ -f package-lock.json ]; then
+          npm ci
+        else
+          npm install
+        fi
     sources:
       - package.json
       - package-lock.json
@@ -124,8 +129,13 @@ tasks:
 
   package:
     desc: Build and package the extension as a .vsix into releases/vX.Y.Z/.
-    deps: [submodule:init, version:sync]
     cmds:
+      - task: submodule:init
+      - task: install
+      - task: version:sync
+      - task: typecheck
+      - task: lint
+      - task: test:unit
       - mkdir -p {{.VERSIONED_DIR}}
       - task: build
       - node_modules/.bin/vsce package --out {{.VERSIONED_DIR}}/

@@ -1,0 +1,48 @@
+#!/bin/sh
+set -eu
+
+APPDIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+UV_BIN="$APPDIR/usr/bin/uv"
+WHEELS_DIR="$APPDIR/usr/share/con-pilot/wheels"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+STATE_DIR="$DATA_HOME/con-pilot"
+VENV_DIR="$STATE_DIR/venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
+CON_PILOT_DEV_SHOW_ME=1
+ENTRYPOINT="$VENV_DIR/bin/con-pilot"
+WHEEL_FILE="$(ls "$WHEELS_DIR"/con_pilot-*.whl 2>/dev/null | head -n 1)"
+WHEEL_HASH_FILE="$STATE_DIR/con-pilot-wheel.sha256"
+
+mkdir -p "$STATE_DIR"
+
+if [ ! -x "$UV_BIN" ]; then
+  echo "con-pilot AppImage is missing bundled uv binary at: $UV_BIN" >&2
+  exit 1
+fi
+
+if [ -z "$WHEEL_FILE" ]; then
+  echo "con-pilot AppImage is missing bundled con_pilot wheel in: $WHEELS_DIR" >&2
+  exit 1
+fi
+
+CURRENT_WHEEL_HASH="$(sha256sum "$WHEEL_FILE" | awk '{print $1}')"
+PREVIOUS_WHEEL_HASH="$(cat "$WHEEL_HASH_FILE" 2>/dev/null || true)"
+
+if [ "$CURRENT_WHEEL_HASH" != "$PREVIOUS_WHEEL_HASH" ]; then
+  rm -rf "$VENV_DIR"
+fi
+
+if [ ! -d "$VENV_DIR" ]; then
+  "$UV_BIN" venv "$VENV_DIR"
+fi
+
+"$UV_BIN" pip install \
+  --python "$VENV_PYTHON" \
+  --no-index \
+  --find-links "$WHEELS_DIR" \
+  --upgrade \
+  con-pilot
+
+printf '%s\n' "$CURRENT_WHEEL_HASH" > "$WHEEL_HASH_FILE"
+
+exec "$ENTRYPOINT" "$@"

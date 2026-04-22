@@ -15,6 +15,7 @@ import yaml
 from con_pilot.conductor import ConPilot
 from con_pilot.main import main
 from con_pilot.models import ConductorConfig, CronConfig
+from con_pilot.paths import PathResolver
 
 # ── Minimal conductor.json shared across all tests ───────────────────────────
 
@@ -265,12 +266,14 @@ class TestSync:
         with patch.object(pilot, "resolve_project", return_value=None):
             pilot.sync()
         assert not ghost.exists()
-        assert (home / ".github" / "system" / "agents" / "retired" / "ghost.agent.md").exists()
+        assert (
+            home / ".github" / "system" / "agents" / "retired" / "ghost.agent.md"
+        ).exists()
 
     def test_restores_retired_system_agent(self, pilot: ConPilot, home: Path) -> None:
-        (home / ".github" / "system" / "agents" / "retired" / "support.agent.md").write_text(
-            '---\nname: "dogsbody"\nmodel: "test-model"\n---\n'
-        )
+        (
+            home / ".github" / "system" / "agents" / "retired" / "support.agent.md"
+        ).write_text('---\nname: "dogsbody"\nmodel: "test-model"\n---\n')
         with patch.object(pilot, "resolve_project", return_value=None):
             pilot.sync()
         assert (home / ".github" / "system" / "agents" / "support.agent.md").exists()
@@ -556,9 +559,44 @@ class TestAmendAgent:
         instr = tmp_path / "i.md"
         instr.write_text("- Be helpful.")
         pilot.amend_agent(str(instr), "support", key=pilot._load_or_generate_key())
-        content = (home / ".github" / "system" / "agents" / "support.agent.md").read_text()
+        content = (
+            home / ".github" / "system" / "agents" / "support.agent.md"
+        ).read_text()
         assert "## Instructions" in content
         assert "- Be helpful." in content
+
+    def test_system_agent_with_key_in_source_appdir(
+        self, pilot: ConPilot, home: Path, tmp_path: Path
+    ) -> None:
+        (home / ".github" / "system" / "agents" / "support.agent.md").write_text(
+            '---\nname: "dogsbody"\nmodel: "test-model"\n---\n\n## Role\nSupport.'
+        )
+        appdir = home / "src" / "python" / "con-pilot" / "appimage" / "AppDir"
+        appdir.mkdir(parents=True, exist_ok=True)
+        (appdir / "key").write_text("appdir-test-key")
+
+        instr = tmp_path / "i.md"
+        instr.write_text("- Be helpful from AppDir.")
+        pilot.amend_agent(str(instr), "support", key="appdir-test-key")
+
+        content = (
+            home / ".github" / "system" / "agents" / "support.agent.md"
+        ).read_text()
+        assert "## Instructions" in content
+        assert "- Be helpful from AppDir." in content
+
+
+class TestPathResolverKeyFile:
+    def test_prefers_appdir_env_key_when_present(
+        self, home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        appdir = tmp_path / "fake-appdir"
+        appdir.mkdir(parents=True, exist_ok=True)
+        (appdir / "key").write_text("env-appdir-key")
+        monkeypatch.setenv("APPDIR", str(appdir))
+
+        resolver = PathResolver(str(home))
+        assert resolver.key_file == str(appdir / "key")
 
 
 # ── replace_agent ─────────────────────────────────────────────────────────────

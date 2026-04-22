@@ -5,13 +5,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CON_PILOT_HOST="${CON_PILOT_HOST:-localhost}"
 CON_PILOT_PORT="${CON_PILOT_PORT:-8000}"
 BASE_URL="http://${CON_PILOT_HOST}:${CON_PILOT_PORT}"
+CON_PILOT_API_BASE="${CON_PILOT_API_BASE:-api}"
+CON_PILOT_API_VERSION="${CON_PILOT_API_VERSION:-v1}"
+_api_base="${CON_PILOT_API_BASE#/}"; _api_base="${_api_base%/}"
+_api_version="${CON_PILOT_API_VERSION#/}"; _api_version="${_api_version%/}"
+API_PREFIX="/${_api_base}/${_api_version}"
+API_URL="${BASE_URL}${API_PREFIX}"
+CON_PILOT_DEV_SHOW_ME=1
+unset _api_base _api_version
 
 # Lazy-load version from service (with 2s timeout) or fall back to VERSION file
 _VERSION_CACHE=""
 get_version() {
   if [[ -z "$_VERSION_CACHE" ]]; then
     local http_ver
-    http_ver="$(curl -sf --connect-timeout 2 --max-time 2 "${BASE_URL}/version" 2>/dev/null \
+    http_ver="$(api_get "/version" \
       | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
     if [[ -n "$http_ver" ]]; then
       _VERSION_CACHE="$http_ver"
@@ -52,6 +60,8 @@ Admin commands (require --key):
 
 General:
   version                    Show version information
+  end-points <subcommand>    Manage API endpoint discovery and checks
+  verify <item> <value>      Verify an item value (currently: key)
   help                       Show this help message
 EOF
 }
@@ -259,6 +269,46 @@ Example:
 EOF
 }
 
+usage_verify() {
+  cat <<EOF
+conduct verify — Verify values with the con-pilot service
+
+Usage:
+  conduct verify <item> <value>
+
+Supported items:
+  key        Verify the provided install key against the server
+
+Options:
+  --help, -h    Show this help message
+
+Examples:
+  conduct verify key abc-123
+EOF
+}
+
+usage_end_points() {
+  cat <<EOF
+conduct end-points — API endpoint discovery and checks
+
+Usage:
+  conduct end-points <subcommand> [args]
+
+Subcommands:
+  list                      List endpoint names, methods, paths, args, and body
+  ping <endpoint-name>      Ping one endpoint by name and print HTTP status
+  show-me                   Call temporary dev diagnostics endpoint (/show-me)
+
+Options:
+  --help, -h    Show this help message
+
+Examples:
+  conduct end-points list
+  conduct end-points ping health
+  conduct end-points show-me
+EOF
+}
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 require_key() {
@@ -269,11 +319,170 @@ require_key() {
   fi
 }
 
+api_get() {
+  local endpoint="$1" response
+  for url in "${API_URL}${endpoint}" "${BASE_URL}${endpoint}" "${BASE_URL}/v1${endpoint}"; do
+    if response="$(curl -sf --connect-timeout 2 --max-time 5 "$url" 2>/dev/null)"; then
+      printf '%s' "$response"
+      return 0
+    fi
+  done
+  return 1
+}
+
 api_post() {
   local endpoint="$1" body="$2"
-  curl -sf -X POST "${BASE_URL}${endpoint}" \
-    -H "Content-Type: application/json" \
-    -d "$body"
+  local url
+  for url in "${API_URL}${endpoint}" "${BASE_URL}${endpoint}" "${BASE_URL}/v1${endpoint}"; do
+    if curl -sf -X POST "$url" \
+      -H "Content-Type: application/json" \
+      -d "$body"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+endpoint_spec() {
+  case "$1" in
+    health) echo "GET ${API_PREFIX}/health" ;;
+    version) echo "GET ${API_PREFIX}/version" ;;
+    login) echo "POST ${API_PREFIX}/login" ;;
+    agents) echo "GET ${API_PREFIX}/agents" ;;
+    setup-env) echo "GET ${API_PREFIX}/setup-env" ;;
+    validate) echo "POST ${API_PREFIX}/validate" ;;
+    sync) echo "POST ${API_PREFIX}/sync" ;;
+    cron) echo "POST ${API_PREFIX}/cron" ;;
+    register) echo "POST ${API_PREFIX}/register" ;;
+    retire-project) echo "POST ${API_PREFIX}/retire-project" ;;
+    replace) echo "POST ${API_PREFIX}/replace" ;;
+    reset) echo "POST ${API_PREFIX}/reset" ;;
+    verify-key) echo "POST ${API_PREFIX}/verify-key" ;;
+    create-user) echo "POST ${API_PREFIX}/create-user" ;;
+    show-me) echo "GET ${API_PREFIX}/show-me" ;;
+    config) echo "POST ${API_PREFIX}/config" ;;
+    config-version) echo "GET ${API_PREFIX}/config/{version}" ;;
+    config-diff) echo "POST ${API_PREFIX}/config/diff" ;;
+    config-activate) echo "POST ${API_PREFIX}/config/{version}/activate" ;;
+    snapshot) echo "GET ${API_PREFIX}/snapshot" ;;
+    snapshot-changes) echo "GET ${API_PREFIX}/snapshot/changes" ;;
+    snapshot-check-and-create) echo "POST ${API_PREFIX}/snapshot/check-and-create" ;;
+    snapshot-watcher) echo "GET ${API_PREFIX}/snapshot/watcher" ;;
+    snapshot-watcher-start) echo "POST ${API_PREFIX}/snapshot/watcher/start" ;;
+    snapshot-watcher-stop) echo "POST ${API_PREFIX}/snapshot/watcher/stop" ;;
+    *) return 1 ;;
+  esac
+}
+
+cmd_end_points() {
+  if [[ $# -eq 0 ]]; then
+    usage_end_points
+    exit 0
+  fi
+
+  case "$1" in
+    -h|--help|help)
+      usage_end_points
+      exit 0
+      ;;
+  esac
+
+  local subcmd="$1"
+  shift
+
+  case "$subcmd" in
+    list)
+      cat <<EOF
+    health                    | GET  ${API_PREFIX}/health                 | args: none                                   | body: none
+    version                   | GET  ${API_PREFIX}/version                | args: none                                   | body: none
+    login                     | POST ${API_PREFIX}/login                  | args: none                                   | body: {"username":"<user>","password":"<pass>"}
+    agents                    | GET  ${API_PREFIX}/agents                 | args: ?project=<name>                        | body: none
+    setup-env                 | GET  ${API_PREFIX}/setup-env              | args: none                                   | body: none
+    validate                  | POST ${API_PREFIX}/validate               | args: none                                   | body: {"project":"<name>"}
+    sync                      | POST ${API_PREFIX}/sync                   | args: none                                   | body: none
+    cron                      | POST ${API_PREFIX}/cron                   | args: none                                   | body: none
+    register                  | POST ${API_PREFIX}/register               | args: none                                   | body: {"name":"<name>","directory":"<abs-path>"}
+    retire-project            | POST ${API_PREFIX}/retire-project         | args: none                                   | body: {"name":"<name>"}
+    replace                   | POST ${API_PREFIX}/replace                | args: none                                   | body: {"file":"<path>","role":"<role>","key":"<key>","project":"<optional>"}
+    reset                     | POST ${API_PREFIX}/reset                  | args: none                                   | body: {"role":"<role>","key":"<key>","project":"<optional>"}
+    verify-key                | POST ${API_PREFIX}/verify-key             | args: none                                   | body: {"key":"<key>"}
+    create-user               | POST ${API_PREFIX}/create-user            | args: header X-Install-Key:<key>             | body: {"username":"<user>","password":"<pass>","active":true}
+    show-me                   | GET  ${API_PREFIX}/show-me                | args: env CON_PILOT_DEV_SHOW_ME=1            | body: none
+    config                    | POST ${API_PREFIX}/config                 | args: none                                   | body: {"config":{...}}
+    config-version            | GET  ${API_PREFIX}/config/{version}       | args: version=<id>                           | body: none
+    config-diff               | POST ${API_PREFIX}/config/diff            | args: none                                   | body: {"left_version":"<id>","right_version":"<id>"}
+    config-activate           | POST ${API_PREFIX}/config/{version}/activate | args: version=<id>                        | body: none
+    snapshot                  | GET  ${API_PREFIX}/snapshot               | args: none                                   | body: none
+    snapshot-changes          | GET  ${API_PREFIX}/snapshot/changes       | args: none                                   | body: none
+    snapshot-check-and-create | POST ${API_PREFIX}/snapshot/check-and-create | args: none                                | body: none
+    snapshot-watcher          | GET  ${API_PREFIX}/snapshot/watcher       | args: none                                   | body: none
+    snapshot-watcher-start    | POST ${API_PREFIX}/snapshot/watcher/start | args: none                                   | body: none
+    snapshot-watcher-stop     | POST ${API_PREFIX}/snapshot/watcher/stop  | args: none                                   | body: none
+EOF
+      ;;
+    ping)
+      if [[ $# -lt 1 ]]; then
+        echo "Usage: conduct end-points ping <endpoint-name>" >&2
+        exit 1
+      fi
+      local spec
+      if ! spec="$(endpoint_spec "$1")"; then
+        echo "Unknown endpoint name: $1" >&2
+        echo "Tip: run 'conduct end-points list'" >&2
+        exit 1
+      fi
+      local path="${spec#* }"
+      if [[ "$path" == *"{"* ]]; then
+        echo "Endpoint '$1' requires path arguments and cannot be pinged by name only." >&2
+        exit 1
+      fi
+      local code
+      code="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 "${BASE_URL}${path}" || true)"
+      if [[ "$code" == "000" ]]; then
+        echo "Ping failed: no response from ${BASE_URL}${path}" >&2
+        exit 1
+      fi
+      echo "Endpoint '$1' reachable at ${path} (HTTP ${code})."
+      ;;
+    show-me)
+      local output body code
+      for url in "${API_URL}/show-me" "${BASE_URL}/show-me" "${BASE_URL}/v1/show-me"; do
+        if output="$(curl -sS --connect-timeout 2 --max-time 10 "$url" -w $'\n%{http_code}' 2>/dev/null)"; then
+          code="${output##*$'\n'}"
+          body="${output%$'\n'*}"
+          [[ "$code" != "404" ]] && break
+        fi
+      done
+
+      if [[ -z "${code:-}" ]]; then
+        echo "show-me failed: could not reach ${API_URL}/show-me" >&2
+        exit 1
+      fi
+
+      if [[ "$code" != "200" ]]; then
+        if [[ "$code" == "404" ]]; then
+          echo "show-me unavailable: set CON_PILOT_DEV_SHOW_ME=1 on the running service" >&2
+        else
+          echo "show-me failed: HTTP ${code}" >&2
+        fi
+        if [[ -n "$body" ]]; then
+          echo "$body" >&2
+        fi
+        exit 1
+      fi
+
+      if command -v jq >/dev/null 2>&1; then
+        echo "$body" | jq .
+      else
+        echo "$body"
+      fi
+      ;;
+    *)
+      echo "Unknown end-points command: $subcmd" >&2
+      usage_end_points >&2
+      exit 1
+      ;;
+  esac
 }
 
 # ── Service commands ──────────────────────────────────────────────────────────
@@ -301,13 +510,12 @@ cmd_start() {
 
   local LOG="$CONDUCTOR_HOME/con-pilot.log"
   mkdir -p "$(dirname "$LOG")"
-  setsid "$APPIMAGE" serve "$@" >> "$LOG" 2>&1 &
+  CON_PILOT_DEV_SHOW_ME=1 setsid "$APPIMAGE" serve "$@" >> "$LOG" 2>&1 &
   local PID=$!
   echo "con-pilot started (PID $PID), logging to $LOG"
 
-  local HEALTH_URL="http://${CON_PILOT_HOST}:${CON_PILOT_PORT}/health"
   for i in $(seq 1 15); do
-    if curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
+    if api_get "/health" >/dev/null 2>&1; then
       echo "Health check passed."
       return 0
     fi
@@ -334,8 +542,8 @@ cmd_status() {
     esac
   done
   local health version_resp
-  health=$(curl -sf --connect-timeout 2 --max-time 2 "${BASE_URL}/health" 2>/dev/null) || true
-  version_resp=$(curl -sf --connect-timeout 2 --max-time 2 "${BASE_URL}/version" 2>/dev/null) || true
+  health=$(api_get "/health") || true
+  version_resp=$(api_get "/version") || true
   if [[ -z "$health" ]]; then
     echo "con-pilot is NOT running (no response from ${BASE_URL})."
     exit 1
@@ -401,14 +609,16 @@ cmd_agents() {
     esac
   done
 
-  local url="${BASE_URL}/agents"
-  [[ -n "$project" ]] && url+="?project=$project"
-
   local response
-  response=$(curl -sf "$url") || {
+  if [[ -n "$project" ]]; then
+    response=$(api_get "/agents?project=$project") || true
+  else
+    response=$(api_get "/agents") || true
+  fi
+  if [[ -z "$response" ]]; then
     echo "Error: Could not reach con-pilot service at $BASE_URL" >&2
     exit 1
-  }
+  fi
 
   if [[ -n "$json" ]]; then
     echo "$response"
@@ -457,6 +667,85 @@ cmd_retire() {
     exit 1
   fi
   api_post "/retire-project" "{\"name\": \"$1\"}"
+}
+
+cmd_verify() {
+  # Handle help flags
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) usage_verify; exit 0 ;;
+    esac
+  done
+
+  if [[ $# -lt 2 ]]; then
+    echo "Usage: conduct verify <item> <value>" >&2
+    exit 1
+  fi
+
+  local item="$1"
+  local value="$2"
+
+  case "$item" in
+    key)
+      local result body code endpoint
+      endpoint="${API_PREFIX}/verify-key"
+      if ! result="$(curl -sS --connect-timeout 2 --max-time 5 -X POST "${BASE_URL}${endpoint}" \
+        -H "Content-Type: application/json" \
+        -d "{\"key\": \"$value\"}" \
+        -w $'\n%{http_code}')"; then
+        echo "Verify failed: could not reach ${BASE_URL}${endpoint}" >&2
+        exit 1
+      fi
+
+      code="${result##*$'\n'}"
+      body="${result%$'\n'*}"
+
+      # Backward-compatibility for older deployments exposing this endpoint elsewhere.
+      if [[ "$code" == "404" ]]; then
+        for endpoint in "/verify-key" "/v1/verify-key"; do
+          if ! result="$(curl -sS --connect-timeout 2 --max-time 5 -X POST "${BASE_URL}${endpoint}" \
+            -H "Content-Type: application/json" \
+            -d "{\"key\": \"$value\"}" \
+            -w $'\n%{http_code}')"; then
+            continue
+          fi
+          code="${result##*$'\n'}"
+          body="${result%$'\n'*}"
+          [[ "$code" != "404" ]] && break
+        done
+      fi
+
+      case "$code" in
+        200)
+          echo "Verified: key"
+          ;;
+        401)
+          echo "Invalid key"
+          exit 1
+          ;;
+        503)
+          echo "Verify failed: install key is not available on server"
+          exit 1
+          ;;
+        404)
+          echo "Verify failed: endpoint not available on server (deploy a build that includes /verify-key)"
+          exit 1
+          ;;
+        *)
+          echo "Verify failed: HTTP ${code}"
+          if [[ -n "$body" ]]; then
+            echo "$body"
+          fi
+          exit 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "Unknown verify item: $item" >&2
+      echo "Supported verify items: key" >&2
+      exit 1
+      ;;
+  esac
 }
 
 # ── Admin commands ────────────────────────────────────────────────────────────
@@ -555,6 +844,8 @@ case "$1" in
   agents)    shift; cmd_agents "$@" ;;
   register)  shift; cmd_register "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
+  end-points) shift; cmd_end_points "$@" ;;
+  verify)    shift; cmd_verify "$@" ;;
   admin)     shift; cmd_admin "$@" ;;
   version|--version|-v) v="$(get_version)"; echo "Conductor v${v}  (con-pilot v${v})" ;;
   help|--help|-h) usage ;;

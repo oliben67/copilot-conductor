@@ -5,7 +5,6 @@ vars:
   VENV: "{{.CON_PILOT_DIR}}/.venv"
   CON_PILOT: "{{.VENV}}/bin/con-pilot"
   PYTHON: "{{.VENV}}/bin/python"
-  KEY_FILE: "{{.CON_PILOT_DIR}}/key"
   APPIMAGE_DIR: "{{.CON_PILOT_DIR}}/appimage"
   APPIMAGETOOL_VERSION: "continuous"
   BASHRC: "{{.HOME}}/.bashrc"
@@ -43,8 +42,8 @@ tasks:
       - task: _install-env
       - task: _install-appimage
       - task: _install-start
-      - task: _install-show-key
       - task: _install-smoke-test
+      - task: _install-show-key
 
   _install-env:
     internal: true
@@ -84,7 +83,7 @@ tasks:
 
   _install-appimage:
     internal: true
-    desc: Install the AppImage binary into CONDUCTOR_HOME.
+    desc: Install AppImage, inject fresh admin key into payload, and keep key only in temp storage.
     cmds:
       - |
         APPIMAGE="{{.APPIMAGE_BUNDLE}}"
@@ -101,8 +100,44 @@ tasks:
         if [[ -f "$DEST" ]] && [[ "$FORCE" != true ]]; then
           echo "con-pilot AppImage is already installed at $DEST. Use -- --force to reinstall."
         else
+          KEY="$(python3 -c "import uuid; print(uuid.uuid4())")"
+          TMPDIR="$(mktemp -d)"
+          cleanup() {
+            rm -rf "$TMPDIR"
+          }
+          trap cleanup EXIT
+
           cp "$APPIMAGE" "$DEST"
           chmod +x "$DEST"
+
+          # Extract deployed AppImage, inject key at AppDir root, and repack with appimagetool.
+          (
+            cd "$TMPDIR"
+            "$DEST" --appimage-extract >/dev/null
+          )
+          APPDIR_SRC="$TMPDIR/squashfs-root"
+          if [[ ! -d "$APPDIR_SRC" ]]; then
+            echo "Error: failed to extract AppImage payload from $DEST"
+            exit 1
+          fi
+
+          printf '%s\n' "$KEY" > "$APPDIR_SRC/key"
+          chmod 600 "$APPDIR_SRC/key"
+
+          TOOL="{{.CON_PILOT_DIR}}/appimage/tools/appimagetool-x86_64.AppImage"
+          if [[ ! -f "$TOOL" ]]; then
+            mkdir -p "{{.CON_PILOT_DIR}}/appimage/tools"
+            echo "Downloading appimagetool ({{.APPIMAGETOOL_VERSION}})…"
+            curl -fsSL -o "$TOOL" \
+              "https://github.com/AppImage/AppImageKit/releases/download/{{.APPIMAGETOOL_VERSION}}/appimagetool-x86_64.AppImage"
+            chmod +x "$TOOL"
+          fi
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" "$APPDIR_SRC" "$DEST"
+          chmod +x "$DEST"
+
+          # Ensure no host-side key file persists in CONDUCTOR_HOME.
+          rm -f "{{.CONDUCTOR_HOME}}/key"
+
           echo "Installed AppImage to $DEST."
         fi
 
@@ -115,12 +150,14 @@ tasks:
         # Stop any existing instance
         pkill -f "con-pilot.*serve" 2>/dev/null || true
         sleep 1
-        setsid "{{.CONDUCTOR_HOME}}/con-pilot.AppImage" serve >> "$LOG" 2>&1 &
+        CON_PILOT_DEV_SHOW_ME=1 setsid "{{.CONDUCTOR_HOME}}/con-pilot.AppImage" serve >> "$LOG" 2>&1 &
         SERVER_PID=$!
-        HEALTH_URL="http://{{.CON_PILOT_HOST}}:{{.CON_PILOT_PORT}}/health"
+        API_PREFIX="/${CON_PILOT_API_BASE:-api}/${CON_PILOT_API_VERSION:-v1}"
+        HEALTH_URL="http://{{.CON_PILOT_HOST}}:{{.CON_PILOT_PORT}}${API_PREFIX}/health"
+        LEGACY_HEALTH_URL="http://{{.CON_PILOT_HOST}}:{{.CON_PILOT_PORT}}/health"
         echo "Waiting for $HEALTH_URL …"
         for i in $(seq 1 20); do
-          if curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
+          if curl -sf "$HEALTH_URL" >/dev/null 2>&1 || curl -sf "$LEGACY_HEALTH_URL" >/dev/null 2>&1; then
             echo "Health check passed — con-pilot is running. Logs: $LOG"
             break
           fi
@@ -131,25 +168,35 @@ tasks:
           fi
           sleep 1
         done
-        if ! curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
+        if ! curl -sf "$HEALTH_URL" >/dev/null 2>&1 && ! curl -sf "$LEGACY_HEALTH_URL" >/dev/null 2>&1; then
           echo "Error: con-pilot did not become healthy after 20s. Check $LOG"
           exit 1
         fi
 
   _install-show-key:
     internal: true
-    desc: Display the admin key once, then shred the plaintext.
+    desc: Display admin key once after successful install by reading it from AppImage payload.
     cmds:
       - |
-        if [[ -f "{{.KEY_FILE}}" ]]; then
+        DEST="{{.CONDUCTOR_HOME}}/con-pilot.AppImage"
+        TMPDIR="$(mktemp -d)"
+        cleanup() {
+          rm -rf "$TMPDIR"
+        }
+        trap cleanup EXIT
+
+        (
+          cd "$TMPDIR"
+          "$DEST" --appimage-extract >/dev/null
+        )
+        KEY_FILE="$TMPDIR/squashfs-root/key"
+
+        if [[ -f "$KEY_FILE" ]]; then
           echo ""
-          echo "ADMIN KEY (save this NOW — it will NOT be shown again): $(cat '{{.KEY_FILE}}')"
+          echo "ADMIN KEY (shown once): $(cat "$KEY_FILE")"
           echo ""
-          # Securely erase the key file
-          shred -uz "{{.KEY_FILE}}" 2>/dev/null || rm -f "{{.KEY_FILE}}"
-          echo "Key file erased. Store the key in a safe place."
         else
-          echo "Warning: No admin key file found at {{.KEY_FILE}}."
+          echo "Warning: no embedded admin key found in $DEST"
         fi
 
   _install-smoke-test:
@@ -158,26 +205,29 @@ tasks:
     cmds:
       - |
         BASE_URL="http://{{.CON_PILOT_HOST}}:{{.CON_PILOT_PORT}}"
+        API_PREFIX="/${CON_PILOT_API_BASE:-api}/${CON_PILOT_API_VERSION:-v1}"
         PASS=true
         echo ""
         echo "── Smoke test ──────────────────────────────────────────────"
 
         # 1. Health check
-        HEALTH=$(curl -sf --connect-timeout 3 --max-time 5 "${BASE_URL}/health" 2>/dev/null) || true
+        HEALTH=$(curl -sf --connect-timeout 3 --max-time 5 "${BASE_URL}${API_PREFIX}/health" 2>/dev/null) || \
+          HEALTH=$(curl -sf --connect-timeout 3 --max-time 5 "${BASE_URL}/health" 2>/dev/null) || true
         if [[ "$(printf '%s' "$HEALTH" | sed 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')" == "ok" ]]; then
-          echo "  [PASS] GET /health → ok"
+          echo "  [PASS] GET ${API_PREFIX}/health → ok"
         else
-          echo "  [FAIL] GET /health returned: ${HEALTH:-<no response>}"
+          echo "  [FAIL] GET ${API_PREFIX}/health returned: ${HEALTH:-<no response>}"
           PASS=false
         fi
 
         # 2. Version check
-        VERSION=$(curl -sf --connect-timeout 3 --max-time 5 "${BASE_URL}/version" 2>/dev/null) || true
+        VERSION=$(curl -sf --connect-timeout 3 --max-time 5 "${BASE_URL}${API_PREFIX}/version" 2>/dev/null) || \
+          VERSION=$(curl -sf --connect-timeout 3 --max-time 5 "${BASE_URL}/version" 2>/dev/null) || true
         VERSION_VAL=$(printf '%s' "$VERSION" | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
         if [[ -n "$VERSION_VAL" && "$VERSION_VAL" != "$VERSION" ]]; then
-          echo "  [PASS] GET /version → ${VERSION_VAL}"
+          echo "  [PASS] GET ${API_PREFIX}/version → ${VERSION_VAL}"
         else
-          echo "  [FAIL] GET /version returned: ${VERSION:-<no response>}"
+          echo "  [FAIL] GET ${API_PREFIX}/version returned: ${VERSION:-<no response>}"
           PASS=false
         fi
 
@@ -254,7 +304,18 @@ tasks:
     dir: "{{.CON_PILOT_DIR}}"
     cmds:
       - uv sync --all-groups
+      - task: _deploy-sync-cli
       - task: _restart
+
+  _deploy-sync-cli:
+    internal: true
+    desc: Sync the latest conduct CLI script to CONDUCTOR_HOME.
+    cmds:
+      - |
+        mkdir -p "{{.CONDUCTOR_HOME}}"
+        cp "{{.ROOT_DIR}}/conduct" "{{.CONDUCTOR_HOME}}/conduct"
+        chmod +x "{{.CONDUCTOR_HOME}}/conduct"
+        echo "Updated {{.CONDUCTOR_HOME}}/conduct from repo source."
 
   _restart:
     internal: true
@@ -268,7 +329,7 @@ tasks:
         fi
       - |
         LOG="{{.CONDUCTOR_HOME}}/con-pilot.log"
-        setsid "{{.CONDUCTOR_HOME}}/con-pilot.AppImage" serve \
+        CON_PILOT_DEV_SHOW_ME=1 setsid "{{.CONDUCTOR_HOME}}/con-pilot.AppImage" serve \
           >> "$LOG" 2>&1 &
         echo "con-pilot started (PID $!), logging to $LOG"
 
@@ -345,12 +406,24 @@ tasks:
       - task: test
 
   build:
-    desc: "Run lint, tests, build AppImage, and package into setup.sh."
+    desc: "Run lint, tests, and full release packaging (including releases/v*/ setup and notes)."
     cmds:
       - task: lint
       - task: test
-      - task: appimage
-      - task: release:package
+      - task: release
+
+  # ── Lectern (VS Code Extension) ──────────────────────────────────────────────
+
+  lectern:package:
+    desc: "Build and package the conduct-lectern VS Code extension as a .vsix."
+    cmds:
+      - |
+        VSIX="{{.ROOT_DIR}}/releases/v{{.VERSION}}/conduct-lectern-{{.CONDUCTOR_HOME_VERSION}}.vsix"
+        if [[ -f "$VSIX" ]]; then
+          echo "VSIX already exists at $VSIX; skipping rebuild."
+        else
+          cd "{{.ROOT_DIR}}/src/vscode/conduct-lectern" && task package
+        fi
 
   # ── AppImage ─────────────────────────────────────────────────────────────────
 
@@ -362,13 +435,17 @@ tasks:
     cmds:
       - rm -rf appimage/deps && mkdir -p appimage/deps
       - uv build --wheel --out-dir appimage/deps .
-      - >-
-        uv run --with pip pip download
-        -d appimage/deps
-        --only-binary=:all:
-        fastapi "uvicorn[standard]" croniter jsonschema structlog
+      - |
+        WHEEL="$(echo appimage/deps/con_pilot-*.whl)"
+        uv run --with pip pip download \
+          -d appimage/deps \
+          "$WHEEL" \
+          setuptools \
+          wheel
     sources:
       - "{{.CON_PILOT_DIR}}/pyproject.toml"
+      - "{{.CON_PILOT_DIR}}/VERSION"
+      - "{{.CON_PILOT_DIR}}/src/**/*.py"
     generates:
       - "{{.CON_PILOT_DIR}}/appimage/deps/*.whl"
 
@@ -421,7 +498,8 @@ tasks:
         chmod +x "$APPDIR/usr/bin/uv"
 
         # Wheels
-        cp appimage/deps/*.whl "$APPDIR/usr/share/con-pilot/wheels/"
+        cp appimage/deps/*.whl "$APPDIR/usr/share/con-pilot/wheels/" 2>/dev/null || true
+        cp appimage/deps/*.tar.gz "$APPDIR/usr/share/con-pilot/wheels/" 2>/dev/null || true
 
         echo "AppDir built at $APPDIR"
 
@@ -508,7 +586,7 @@ tasks:
 
         if [[ "$RELEASE" == true ]]; then
           task release:bump
-          task release:package
+          task release
         fi
 
   # ── Release ─────────────────────────────────────────────────────────────────
@@ -656,9 +734,10 @@ tasks:
         echo "Includes offline dependencies: Platform, Sdk, uv"
 
   release:
-    desc: "Build setup file, create releases/v[version]/ directory, and generate release notes."
+    desc: "Build setup file, vsix, create releases/v[version]/ directory, and generate release notes."
     cmds:
       - task: appimage:build
+      - task: lectern:package
       - task: release:package
       - |
         set -e
@@ -694,9 +773,10 @@ tasks:
         echo "NOTE: Edit $NOTES_FILE to add version-specific changes."
 
   release-all:
-    desc: "Build AppImage and setup file, create releases/v[version]/ directory, and generate release notes."
+    desc: "Build AppImage and setup file, vsix, create releases/v[version]/ directory, and generate release notes."
     cmds:
       - task: appimage:force
+      - task: lectern:package
       - task: release:package
       - |
         set -e

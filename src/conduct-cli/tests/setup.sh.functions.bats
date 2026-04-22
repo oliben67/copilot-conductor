@@ -22,6 +22,35 @@ teardown() {
   rm -rf "$TEST_DIR"
 }
 
+prepare_fake_appimage_runtime() {
+  # Fake AppImage extraction behavior used by show_key.
+  cat > "$CONDUCTOR_HOME/con-pilot.AppImage" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--appimage-extract" ]]; then
+  mkdir -p squashfs-root
+  exit 0
+fi
+echo "unsupported invocation" >&2
+exit 1
+EOF
+  chmod +x "$CONDUCTOR_HOME/con-pilot.AppImage"
+
+  # Fake appimagetool captures embedded key + mode and writes a dummy output.
+  mkdir -p "$CONDUCTOR_HOME/.tools"
+  cat > "$CONDUCTOR_HOME/.tools/appimagetool-x86_64.AppImage" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+APPDIR_SRC="$1"
+OUTPUT="$2"
+cp "$APPDIR_SRC/key" "$CONDUCTOR_HOME/.embedded-key"
+stat -c '%a' "$APPDIR_SRC/key" > "$CONDUCTOR_HOME/.embedded-key-mode"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$OUTPUT"
+chmod +x "$OUTPUT"
+EOF
+  chmod +x "$CONDUCTOR_HOME/.tools/appimagetool-x86_64.AppImage"
+}
+
 
 # ── archive_line ──────────────────────────────────────────────────────────────
 
@@ -105,6 +134,8 @@ teardown() {
 # ── show_key ──────────────────────────────────────────────────────────────────
 
 @test "show_key: creates key file with a non-empty UUID" {
+  prepare_fake_appimage_runtime
+
   # Stub uuidgen
   uuidgen() { echo "test-uuid-1234"; }
   export -f uuidgen
@@ -112,23 +143,26 @@ teardown() {
   run show_key
   [ "$status" -eq 0 ]
 
-  local key_file="$TEST_DIR/key"
-  [ -f "$key_file" ]
-  [ "$(cat "$key_file")" = "test-uuid-1234" ]
+  [ -f "$TEST_DIR/.embedded-key" ]
+  [ "$(cat "$TEST_DIR/.embedded-key")" = "test-uuid-1234" ]
+  # Must never persist host-side key file.
+  [ ! -e "$TEST_DIR/key" ]
 }
 
 @test "show_key: key file has mode 600" {
+  prepare_fake_appimage_runtime
+
   uuidgen() { echo "test-uuid-1234"; }
   export -f uuidgen
 
   show_key >/dev/null 2>&1
-  local key_file="$TEST_DIR/key"
-  local perms
-  perms="$(stat -c '%a' "$key_file")"
-  [ "$perms" = "600" ]
+  [ -f "$TEST_DIR/.embedded-key-mode" ]
+  [ "$(cat "$TEST_DIR/.embedded-key-mode")" = "600" ]
 }
 
 @test "show_key: prints ADMIN KEY to stdout" {
+  prepare_fake_appimage_runtime
+
   uuidgen() { echo "test-uuid-abcd"; }
   export -f uuidgen
 
@@ -139,16 +173,16 @@ teardown() {
 }
 
 @test "show_key: falls back to /proc/sys/kernel/random/uuid when uuidgen missing" {
-  local empty_bin="$TEST_DIR/empty_bin"
-  mkdir -p "$empty_bin"
-  # Run in subprocess with empty PATH to hide uuidgen; /proc/sys/kernel/random/uuid is always readable
-  run bash -c "
-    source '$FUNCTIONS_FILE'
-    CONDUCTOR_HOME='$TEST_DIR'
-    HOME='$TEST_DIR'
-    PATH='$empty_bin'
-    show_key
-  "
+  prepare_fake_appimage_runtime
+
+  # Stub uuidgen to force fallback path (cat /proc/sys/kernel/random/uuid).
+  uuidgen() { return 127; }
+  export -f uuidgen
+
+  run show_key
   [ "$status" -eq 0 ]
   [[ "$output" == *"ADMIN KEY"* ]]
+
+  [ -f "$TEST_DIR/.embedded-key" ]
+  [ -s "$TEST_DIR/.embedded-key" ]
 }

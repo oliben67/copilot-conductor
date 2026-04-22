@@ -41,13 +41,15 @@ start_and_healthcheck() {
   fi
 
   local log="${CONDUCTOR_HOME}/con-pilot.log"
-  setsid "$appimage" serve >> "$log" 2>&1 &
+  CON_PILOT_DEV_SHOW_ME=1 setsid "$appimage" serve >> "$log" 2>&1 &
   local pid=$!
-  local url="http://${host}:${port}/health"
+  local api_prefix="/${CON_PILOT_API_BASE:-api}/${CON_PILOT_API_VERSION:-v1}"
+  local url="http://${host}:${port}${api_prefix}/health"
+  local legacy_url="http://${host}:${port}/health"
   echo "Waiting for ${url}…"
 
   for i in $(seq 1 15); do
-    if curl -sf "$url" >/dev/null 2>&1; then
+    if curl -sf "$url" >/dev/null 2>&1 || curl -sf "$legacy_url" >/dev/null 2>&1; then
       echo "Health check passed — con-pilot is running (PID ${pid}). Logs: ${log}"
       return 0
     fi
@@ -64,15 +66,49 @@ start_and_healthcheck() {
 }
 
 show_key() {
-  local key_file="${CONDUCTOR_HOME}/key"
-
+  local appimage="${CONDUCTOR_HOME}/con-pilot.AppImage"
   local new_key
   new_key="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
-  echo "$new_key" > "$key_file"
-  chmod 600 "$key_file"
+
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  cleanup_show_key() {
+    rm -rf "${tmpdir:-}"
+  }
+  trap cleanup_show_key RETURN
+
+  (
+    cd "$tmpdir"
+    "$appimage" --appimage-extract >/dev/null
+  )
+  local appdir_src="$tmpdir/squashfs-root"
+  if [[ ! -d "$appdir_src" ]]; then
+    echo "Error: failed to extract AppImage payload from ${appimage}" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$new_key" > "$appdir_src/key"
+  chmod 600 "$appdir_src/key"
+
+  local tool_dir="${CONDUCTOR_HOME}/.tools"
+  local tool="${tool_dir}/appimagetool-x86_64.AppImage"
+  if [[ ! -f "$tool" ]]; then
+    mkdir -p "$tool_dir"
+    echo "Downloading appimagetool (continuous)…"
+    curl -fsSL -o "$tool" \
+      "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+    chmod +x "$tool"
+  fi
+
+  local rebuilt="$tmpdir/con-pilot-with-key.AppImage"
+  ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tool" "$appdir_src" "$rebuilt" >/dev/null
+  chmod +x "$rebuilt"
+  mv "$rebuilt" "$appimage"
+
+  # Never leave a host-side key file on disk.
+  rm -f "${CONDUCTOR_HOME}/key"
 
   echo ""
   echo "ADMIN KEY (save this NOW — it will NOT be shown again): $new_key"
   echo ""
-  echo "Key stored at ${key_file}"
 }

@@ -13,6 +13,8 @@ dist/
 wheels/
 .task/
 .flatpak-builder/
+src/python/con-pilot/appimage/AppDir/
+src/python/con-pilot/appimage/tools/
 
 # Flatpak repo (built by flatpak-builder)
 src/python/con-pilot/flatpak/repo/

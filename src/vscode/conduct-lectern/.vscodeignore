@@ -1,6 +1,7 @@
 .vscode/**
 .gitignore
 .vscode-test.mjs
+!README.md
 eslint.config.mjs
 vitest.config.ts
 Taskfile.yml

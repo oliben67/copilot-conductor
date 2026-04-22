@@ -26,7 +26,7 @@
         {
           "id": "conductor",
           "title": "Conductor",
-          "icon": "icons/activitybar.svg"
+          "icon": "icons/dark/icon.svg"
         }
       ]
     },
@@ -35,7 +35,7 @@
         {
           "id": "conductor.homeView",
           "name": "Home",
-          "icon": "icons/activitybar.svg"
+          "icon": "icons/dark/icon.svg"
         }
       ]
     },

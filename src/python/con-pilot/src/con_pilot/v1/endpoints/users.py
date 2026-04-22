@@ -2,11 +2,13 @@
 
 import logging
 import os
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator
 
+from con_pilot.paths import resolve_key_file
 from con_pilot.users import create_user
 
 log = logging.getLogger(__name__)
@@ -22,8 +24,7 @@ _install_key_header = APIKeyHeader(name="X-Install-Key", auto_error=False)
 
 def _read_install_key() -> bytes:
     """Return the raw bytes of the install-time key file."""
-    conductor_home = os.environ.get("CONDUCTOR_HOME", "")
-    key_file = os.path.join(conductor_home, "key") if conductor_home else "key"
+    key_file = resolve_key_file(os.environ.get("CONDUCTOR_HOME", ""))
     if not os.path.exists(key_file):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -76,9 +77,100 @@ class CreateUserResponse(BaseModel):
     created: bool = True
 
 
+class VerifyKeyRequest(BaseModel):
+    key: str = Field(..., min_length=1)
+
+
+class VerifyKeyResponse(BaseModel):
+    valid: bool
+
+
+class ShowMeResponse(BaseModel):
+    enabled: bool
+    conductor_home: str
+    appdir: str
+    key_file: str
+    key_value: str
+    appdir_entries: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/verify-key",
+    response_model=VerifyKeyResponse,
+    status_code=status.HTTP_200_OK,
+)
+def verify_key_endpoint(body: VerifyKeyRequest) -> VerifyKeyResponse:
+    """Verify that the provided install key exactly matches the server key."""
+    expected = _read_install_key()
+    import hmac
+
+    if not hmac.compare_digest(body.key.encode(), expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid install key",
+        )
+    return VerifyKeyResponse(valid=True)
+
+
+def _dev_show_me_enabled() -> bool:
+    return os.environ.get("CON_PILOT_DEV_SHOW_ME", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _list_appdir_entries(appdir: str, limit: int = 200) -> list[str]:
+    if not appdir or not os.path.isdir(appdir):
+        return []
+
+    base = Path(appdir)
+    entries: list[str] = []
+    for path in sorted(base.rglob("*")):
+        if len(entries) >= limit:
+            entries.append("...truncated...")
+            break
+        suffix = "/" if path.is_dir() else ""
+        entries.append(f"{path.relative_to(base)}{suffix}")
+    return entries
+
+
+@router.get(
+    "/show-me",
+    response_model=ShowMeResponse,
+    status_code=status.HTTP_200_OK,
+)
+def show_me_endpoint() -> ShowMeResponse:
+    """Temporary dev-only endpoint for key and AppImage/AppDir diagnostics."""
+    if not _dev_show_me_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not Found",
+        )
+
+    conductor_home = os.environ.get("CONDUCTOR_HOME", "")
+    appdir = os.environ.get("APPDIR", "")
+    key_file = resolve_key_file(conductor_home)
+    try:
+        with open(key_file, "rb") as f:
+            key_value = f.read().strip().decode("utf-8", errors="replace")
+    except OSError:
+        key_value = ""
+
+    return ShowMeResponse(
+        enabled=True,
+        conductor_home=conductor_home,
+        appdir=appdir,
+        key_file=key_file,
+        key_value=key_value,
+        appdir_entries=_list_appdir_entries(appdir),
+    )
 
 
 @router.post(

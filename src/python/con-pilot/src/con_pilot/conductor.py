@@ -1323,8 +1323,16 @@ class ConPilot:
             },
             "loggers": {
                 "uvicorn": {"handlers": ["file"], "level": "INFO", "propagate": False},
-                "uvicorn.error": {"handlers": ["file"], "level": "INFO", "propagate": False},
-                "uvicorn.access": {"handlers": ["file"], "level": "INFO", "propagate": False},
+                "uvicorn.error": {
+                    "handlers": ["file"],
+                    "level": "INFO",
+                    "propagate": False,
+                },
+                "uvicorn.access": {
+                    "handlers": ["file"],
+                    "level": "INFO",
+                    "propagate": False,
+                },
             },
         }
         uvicorn.run(app, host=host, port=port, log_config=log_config)

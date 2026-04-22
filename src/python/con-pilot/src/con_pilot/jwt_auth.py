@@ -18,6 +18,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 import jwt
+from con_pilot.paths import resolve_key_file
 
 log = logging.getLogger(__name__)
 
@@ -57,8 +58,7 @@ def get_jwk(key_file: str | None = None) -> jwt.jwk.AbstractJWKBase:
     else:
         # Priority 2/3: key file (load or create)
         if key_file is None:
-            conductor_home = os.environ.get("CONDUCTOR_HOME", "")
-            key_file = os.path.join(conductor_home, "key") if conductor_home else "key"
+            key_file = resolve_key_file(os.environ.get("CONDUCTOR_HOME", ""))
         key_bytes = _load_or_create_key(key_file)
 
     _jwk = jwt.jwk.OctetJWK(key_bytes)

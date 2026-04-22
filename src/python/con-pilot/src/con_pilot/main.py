@@ -22,7 +22,6 @@ Usage
 import argparse
 import logging
 import os
-import sys
 
 
 def _setup_logging() -> None:

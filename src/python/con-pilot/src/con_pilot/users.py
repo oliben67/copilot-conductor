@@ -31,7 +31,9 @@ _LOCK = threading.Lock()
 
 def _users_file() -> str:
     conductor_home = os.environ.get("CONDUCTOR_HOME", "")
-    return os.path.join(conductor_home, "users.json") if conductor_home else "users.json"
+    return (
+        os.path.join(conductor_home, "users.json") if conductor_home else "users.json"
+    )
 
 
 @dataclass
@@ -69,7 +71,9 @@ def _save(path: str, data: dict) -> None:
     os.chmod(path, 0o600)
 
 
-def create_user(username: str, password: str, active: bool = True, **extra) -> UserRecord:
+def create_user(
+    username: str, password: str, active: bool = True, **extra
+) -> UserRecord:
     """
     Create and persist a new user.
 
@@ -84,12 +88,18 @@ def create_user(username: str, password: str, active: bool = True, **extra) -> U
         if username in data:
             raise ValueError(f"User {username!r} already exists")
         pw_hash, pw_salt = _hash_password(password)
-        record: dict = {"password_hash": pw_hash, "password_salt": pw_salt, "active": active}
+        record: dict = {
+            "password_hash": pw_hash,
+            "password_salt": pw_salt,
+            "active": active,
+        }
         record.update(extra)
         data[username] = record
         _save(path, data)
         log.info("Created user %r (active=%s)", username, active)
-    return UserRecord(username=username, password_hash=pw_hash, password_salt=pw_salt, active=active)
+    return UserRecord(
+        username=username, password_hash=pw_hash, password_salt=pw_salt, active=active
+    )
 
 
 def user_exists(username: str) -> bool:

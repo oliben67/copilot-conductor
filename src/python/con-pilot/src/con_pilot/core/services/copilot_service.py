@@ -13,7 +13,6 @@ are spawned by the conductor using the tools provided here.
 """
 
 import asyncio
-import logging
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -29,7 +28,6 @@ from copilot.generated.session_events import (
     SessionIdleData,
 )
 from copilot.logger import logger as copilot_logger
-from copilot.permissions import PermissionRequestResult
 from copilot.session import PermissionHandler, PermissionRequestResult
 
 from con_pilot.core.models import AgentConfig, AgentPermissions
@@ -37,6 +35,7 @@ from con_pilot.core.models import AgentConfig, AgentPermissions
 HAS_COPILOT_SDK = True
 
 log = copilot_logger.bind(component="CopilotAgentService")
+
 
 class SpawnAgentParams(BaseModel):
     """Parameters for spawning a new agent."""

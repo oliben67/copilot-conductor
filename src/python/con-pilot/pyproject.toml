@@ -5,9 +5,11 @@ description = "Conductor pilot — agent sync and scheduling library for the con
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "copilot>=0.1.9",
     "croniter>=3.0",
     "fastapi>=0.110",
     "jsonschema>=4.20",
+    "pyjwt>=2.8",
     "pyyaml>=6.0",
     "structlog>=25.5.0",
     "uvicorn[standard]>=0.29",

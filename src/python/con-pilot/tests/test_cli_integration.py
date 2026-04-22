@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from con_pilot.paths import resolve_key_file
 
 # Resolve the con-pilot entry-point script from the same venv as the test runner.
 _BIN = Path(sys.executable).parent / "con-pilot"
@@ -155,12 +156,14 @@ class TestSync:
         ghost.write_text("---\nname: ghost\n---\n")
         _run("sync", home=home)
         assert not ghost.exists()
-        assert (home / ".github" / "system" / "agents" / "retired" / "ghost.agent.md").exists()
+        assert (
+            home / ".github" / "system" / "agents" / "retired" / "ghost.agent.md"
+        ).exists()
 
     def test_restores_retired_agent(self, home: Path) -> None:
-        (home / ".github" / "system" / "agents" / "retired" / "support.agent.md").write_text(
-            '---\nname: "dogsbody"\nmodel: "test-model"\n---\n'
-        )
+        (
+            home / ".github" / "system" / "agents" / "retired" / "support.agent.md"
+        ).write_text('---\nname: "dogsbody"\nmodel: "test-model"\n---\n')
         _run("sync", home=home)
         assert (home / ".github" / "system" / "agents" / "support.agent.md").exists()
         assert not (
@@ -324,11 +327,8 @@ class TestAmend:
     def test_conductor_blocked(self, home: Path, tmp_path: Path) -> None:
         instr = tmp_path / "i.md"
         instr.write_text("override.")
-        key = (
-            (home / "python" / "con-pilot" / "key").read_text().strip()
-            if (home / "python" / "con-pilot" / "key").exists()
-            else "anykey"
-        )
+        key_path = Path(resolve_key_file(str(home)))
+        key = key_path.read_text().strip() if key_path.exists() else "anykey"
         r = _run("amend", str(instr), "conductor", "--key", key, home=home, check=False)
         assert r.returncode != 0
 
@@ -345,12 +345,27 @@ class TestAmend:
         instr = tmp_path / "i.md"
         instr.write_text("- Be helpful.")
         _run("amend", str(instr), "support", home=home, check=False)
-        key_file = home / "python" / "con-pilot" / "key"
+        key_file = Path(resolve_key_file(str(home)))
         key = key_file.read_text().strip()
         _run("amend", str(instr), "support", "--key", key, home=home)
-        content = (home / ".github" / "system" / "agents" / "support.agent.md").read_text()
+        content = (
+            home / ".github" / "system" / "agents" / "support.agent.md"
+        ).read_text()
         assert "## Instructions" in content
         assert "- Be helpful." in content
+
+    def test_system_agent_with_key_in_appdir(self, home: Path, tmp_path: Path) -> None:
+        _run("sync", home=home)
+        appdir = home / "src" / "python" / "con-pilot" / "appimage" / "AppDir"
+        appdir.mkdir(parents=True, exist_ok=True)
+        (appdir / "key").write_text("appdir-test-key")
+
+        instr = tmp_path / "i.md"
+        instr.write_text("- From AppDir key.")
+        _run("amend", str(instr), "support", "--key", "appdir-test-key", home=home)
+
+        content = (home / ".github" / "system" / "agents" / "support.agent.md").read_text()
+        assert "- From AppDir key." in content
 
 
 # ── replace ──────────────────────────────────────────────────────────────────

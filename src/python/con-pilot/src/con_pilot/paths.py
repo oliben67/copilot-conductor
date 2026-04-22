@@ -8,6 +8,40 @@ import os
 from pathlib import Path
 
 
+def resolve_key_file(conductor_home: str | None = None) -> str:
+    """Resolve the system/admin key path across current and legacy layouts."""
+    home = conductor_home or os.environ.get("CONDUCTOR_HOME", "")
+    appdir = os.environ.get("APPDIR", "")
+    xdg_data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+
+    candidates: list[str] = []
+    if home:
+        # Primary install location.
+        candidates.append(os.path.join(home, "key"))
+    if appdir:
+        # AppImage runtime/test location.
+        candidates.append(os.path.join(appdir, "key"))
+    if home:
+        # Source-tree AppImage layout used by tests.
+        candidates.append(
+            os.path.join(home, "src", "python", "con-pilot", "appimage", "AppDir", "key")
+        )
+        # Legacy location used by older tests/layout.
+        candidates.append(os.path.join(home, "python", "con-pilot", "key"))
+    # Legacy pre-home location (older installs).
+    candidates.append(os.path.join(xdg_data, "key"))
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+
+    if home:
+        return os.path.join(home, "key")
+    if appdir:
+        return os.path.join(appdir, "key")
+    return "key"
+
+
 class PathResolver:
     """
     Resolves all paths relative to CONDUCTOR_HOME.
@@ -185,19 +219,12 @@ class PathResolver:
 
         Checks (in order):
         1. $CONDUCTOR_HOME/key  (default for AppImage installs)
-        2. Legacy location $XDG_DATA_HOME/key (older installs)
-        3. Falls back to $CONDUCTOR_HOME/key for new keys.
+        2. $APPDIR/key (AppImage runtime and tests)
+        3. Source AppImage layout under CONDUCTOR_HOME for tests
+        4. Legacy locations for older installs/layouts
+        5. Falls back to $CONDUCTOR_HOME/key for new keys.
         """
-        default_key = os.path.join(self.home, "key")
-        if os.path.exists(default_key):
-            return default_key
-        # Legacy location (older installs)
-        xdg_data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
-        legacy_key = os.path.join(xdg_data, "key")
-        if os.path.exists(legacy_key):
-            return legacy_key
-        # Default for new installs
-        return default_key
+        return resolve_key_file(self.home)
 
     # ── Schema path ────────────────────────────────────────────────────────────
 

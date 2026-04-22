@@ -5,6 +5,7 @@ the ConPilot dependency injection.
 """
 
 import logging
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -43,6 +44,16 @@ router.include_router(snapshot_router)
 router.include_router(sync_router)
 router.include_router(projects_router)
 router.include_router(validation_router)
+
+
+def _normalize_segment(value: str) -> str:
+    return value.strip().strip("/")
+
+
+def _api_prefix() -> str:
+    base = _normalize_segment(os.environ.get("CON_PILOT_API_BASE", "api"))
+    version = _normalize_segment(os.environ.get("CON_PILOT_API_VERSION", "v1"))
+    return f"/{base}/{version}"
 
 
 def get_pilot() -> ConPilot:
@@ -130,6 +141,6 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
         pilot.snapshot_service.stop_watcher()
 
     app = FastAPI(title="con-pilot", lifespan=lifespan)
-    app.include_router(router)
+    app.include_router(router, prefix=_api_prefix())
 
     return app
