@@ -554,7 +554,7 @@ tasks:
 
         cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
-        cp "{{.ROOT_DIR}}/VERSION"              "$STAGING/conductor/"
+        cp "{{.CON_PILOT_DIR}}/VERSION"         "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
         cp "{{.ROOT_DIR}}/src/conductor-cli/uninstall-conductor.sh"         "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conductor.yaml"       "$STAGING/conductor/"
