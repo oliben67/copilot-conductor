@@ -59,8 +59,8 @@
 ### Installation
 - `./setup-0.3.0.sh install [CONDUCTOR_HOME]` — Full installation
 - `./setup-0.3.0.sh update` — Update existing installation
-- `./setup-0.3.0.sh uninstall` — Clean removal (same effect as `uninstall.sh`)
-- `uninstall.sh` — Standalone uninstaller (same effect as `setup-0.3.0.sh uninstall`)
+- `./setup-0.3.0.sh uninstall` — Clean removal (same effect as `uninstall-conductor.sh`)
+- `uninstall-conductor.sh` — Standalone uninstaller (same effect as `setup-0.3.0.sh uninstall`)
 - Environment variables persisted in `~/.bashrc`
 
 ### Cron Scheduling
