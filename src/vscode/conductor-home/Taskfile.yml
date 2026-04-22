@@ -1,0 +1,173 @@
+version: "3"
+
+vars:
+  EXT_DIR: "{{.ROOT_DIR}}"
+  RELEASES_DIR: "{{.EXT_DIR}}/releases"
+  VERSION:
+    sh: node -p "require('{{.EXT_DIR}}/package.json').version"
+  VSIX_NAME: "conductor-home-{{.VERSION}}.vsix"
+  VSIX_PATH: "{{.RELEASES_DIR}}/{{.VSIX_NAME}}"
+
+tasks:
+  # ── Dependencies ────────────────────────────────────────────────────────────
+
+  install:
+    desc: Install all npm dependencies (including dev).
+    cmds:
+      - npm ci
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/.package-lock.json
+
+  # ── Code Quality ────────────────────────────────────────────────────────────
+
+  lint:
+    desc: Check source files with ESLint.
+    cmds:
+      - npm run lint
+
+  lint:fix:
+    desc: Auto-fix ESLint issues in source files.
+    cmds:
+      - npm run lint:fix
+
+  typecheck:
+    desc: Run TypeScript type-checking without emitting output.
+    cmds:
+      - npm run compile:check
+
+  check:
+    desc: Run type-checking and linting (no side-effects, exits non-zero on issues).
+    cmds:
+      - task: typecheck
+      - task: lint
+
+  # ── Tests ───────────────────────────────────────────────────────────────────
+
+  test:unit:
+    desc: Run unit tests with Vitest.
+    cmds:
+      - npm run test:unit
+
+  test:unit:watch:
+    desc: Re-run unit tests on file changes.
+    cmds:
+      - npm run test:unit:watch
+
+  test:integration:
+    desc: |
+      Run VS Code integration tests.
+      NOTE: VS Code must NOT be running when this task executes. Close all VS Code
+      windows before running, or run this in a fresh CI environment.
+    cmds:
+      - npm run test:integration
+
+  test:
+    desc: Run the full quality gate — typecheck, lint, unit tests, and integration tests.
+    cmds:
+      - task: typecheck
+      - task: lint
+      - task: test:unit
+      - task: test:integration
+
+  test:ci:
+    desc: CI-safe quality gate — typecheck, lint, and unit tests only (no VS Code required).
+    cmds:
+      - task: typecheck
+      - task: lint
+      - task: test:unit
+
+  # ── Build ───────────────────────────────────────────────────────────────────
+
+  compile:
+    desc: Compile TypeScript source to dist/.
+    cmds:
+      - npm run compile
+    sources:
+      - src/**/*.ts
+      - tsconfig.json
+    generates:
+      - dist/**/*.js
+
+  build:
+    desc: Clean dist/ then compile from scratch.
+    cmds:
+      - npm run build
+
+  clean:
+    desc: Remove compiled output and any packaged .vsix files from releases/.
+    cmds:
+      - npm run clean
+
+  # ── Package ─────────────────────────────────────────────────────────────────
+
+  package:
+    desc: Build and package the extension as a .vsix into releases/.
+    cmds:
+      - mkdir -p {{.RELEASES_DIR}}
+      - npm run package
+    generates:
+      - "{{.VSIX_PATH}}"
+
+  # ── Deploy ──────────────────────────────────────────────────────────────────
+
+  deploy:
+    desc: Install the packaged .vsix into the local VS Code instance.
+    deps: [package]
+    cmds:
+      - code --install-extension {{.VSIX_PATH}}
+
+  deploy:force:
+    desc: Re-package and force-reinstall the extension (useful during development).
+    cmds:
+      - task: clean
+      - task: package
+      - code --install-extension {{.VSIX_PATH}} --force
+
+  # ── Release Push ────────────────────────────────────────────────────────────
+
+  release:push:
+    desc: |
+      Commit and push the current VSIX to copilot-conductor-releases.
+      README.md is a local symlink to the root README; this task replaces it
+      with a real copy before committing, pushes, then restores the symlink.
+    vars:
+      ROOT_README: "{{.ROOT_DIR}}/../../../README.md"
+    cmds:
+      - |
+        set -e
+        RELEASES="{{.RELEASES_DIR}}"
+        ROOT_README="{{.EXT_DIR}}/../../../README.md"
+        cd "$RELEASES"
+
+        # Replace symlink with a real copy for the commit
+        rm -f README.md
+        cp "$ROOT_README" README.md
+
+        git add -A
+        git commit -m "Release conductor-home {{.VERSION}}" || echo "Nothing new to commit"
+        git push origin main
+
+        # Restore the symlink locally
+        rm README.md
+        ln -s ../../../../README.md README.md
+      - |
+        # Update the submodule pointer in the parent repo
+        cd "{{.EXT_DIR}}"
+        git add releases
+        git diff --cached --quiet releases || git -C "{{.EXT_DIR}}" commit -m "chore: update conductor-home releases submodule to {{.VERSION}}"
+
+  # ── CI ──────────────────────────────────────────────────────────────────────
+
+  ci:
+    desc: |
+      CI pipeline — install, typecheck, lint, unit tests, and package.
+      Integration tests are excluded; run 'task test:integration' separately
+      when VS Code is NOT running.
+    cmds:
+      - task: install
+      - task: check
+      - task: test:unit
+      - task: package

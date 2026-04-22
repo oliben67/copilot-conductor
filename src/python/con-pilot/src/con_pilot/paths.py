@@ -89,7 +89,7 @@ class PathResolver:
 
     @property
     def agents_dir(self) -> str:
-        """Path to .github/agents directory."""
+        """Path to .github/agents directory (contains templates)."""
         return os.path.join(self.github_dir, "agents")
 
     @property
@@ -101,6 +101,33 @@ class PathResolver:
     def templates_dir(self) -> str:
         """Path to .github/agents/templates directory."""
         return os.path.join(self.agents_dir, "templates")
+
+    # ── System paths ───────────────────────────────────────────────────────────
+
+    @property
+    def system_dir(self) -> str:
+        """Path to .github/system directory."""
+        return os.path.join(self.github_dir, "system")
+
+    @property
+    def system_agents_dir(self) -> str:
+        """Path to .github/system/agents directory (active system agents)."""
+        return os.path.join(self.system_dir, "agents")
+
+    @property
+    def system_retired_dir(self) -> str:
+        """Path to .github/system/agents/retired directory."""
+        return os.path.join(self.system_agents_dir, "retired")
+
+    @property
+    def system_logs_dir(self) -> str:
+        """Path to .github/system/agents/logs directory."""
+        return os.path.join(self.system_agents_dir, "logs")
+
+    @property
+    def system_cron_dir(self) -> str:
+        """Path to .github/system/cron directory."""
+        return os.path.join(self.system_dir, "cron")
 
     # ── Cron paths ─────────────────────────────────────────────────────────────
 
@@ -146,8 +173,8 @@ class PathResolver:
 
     @property
     def sync_log(self) -> str:
-        """Path to .github/scripts/sync_agents.log."""
-        return os.path.join(self.github_dir, "scripts", "sync_agents.log")
+        """Path to CONDUCTOR_HOME/con-pilot.log."""
+        return os.path.join(self.home, "con-pilot.log")
 
     # ── Security paths ─────────────────────────────────────────────────────────
 
@@ -156,19 +183,21 @@ class PathResolver:
         """
         Path to the system key file.
 
-        Prefers XDG_DATA_HOME (flatpak sandbox) for new installs,
-        falls back to legacy location if it exists.
+        Checks (in order):
+        1. $CONDUCTOR_HOME/key  (default for AppImage installs)
+        2. Legacy location $XDG_DATA_HOME/key (older installs)
+        3. Falls back to $CONDUCTOR_HOME/key for new keys.
         """
+        default_key = os.path.join(self.home, "key")
+        if os.path.exists(default_key):
+            return default_key
+        # Legacy location (older installs)
         xdg_data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
-        flatpak_key = os.path.join(xdg_data, "key")
-        if os.path.exists(flatpak_key):
-            return flatpak_key
-        # Fall back to legacy location
-        legacy_key = os.path.join(self.home, "python", "con-pilot", "key")
+        legacy_key = os.path.join(xdg_data, "key")
         if os.path.exists(legacy_key):
             return legacy_key
-        # Default to flatpak location for new keys
-        return flatpak_key
+        # Default for new installs
+        return default_key
 
     # ── Schema path ────────────────────────────────────────────────────────────
 

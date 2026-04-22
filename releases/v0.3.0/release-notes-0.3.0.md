@@ -1,6 +1,6 @@
 # Conductor v0.3.0
 
-**Release Date:** April 19, 2026
+**Release Date:** April 22, 2026
 
 > Multi-agent orchestration framework for GitHub Copilot.
 
@@ -11,7 +11,7 @@
 ## Highlights
 
 - **Self-extracting installer** — `setup-0.3.0.sh` bundles everything into a single file
-- **Flatpak packaging** — `con-pilot` runs sandboxed with Python 3.14 and uv-based bootstrap
+- **AppImage packaging** — `con-pilot` runs as a portable AppImage with uv-based bootstrap
 - **Full CLI** — the `conduct` command wraps all lifecycle operations
 - **HTTP API** — FastAPI-powered service for programmatic access
 
@@ -92,7 +92,7 @@ conduct status
 ## Requirements
 
 - **Linux** (tested on Ubuntu 22.04+, Fedora 38+)
-- **Flatpak** — [Installation guide](https://flatpak.org/setup/)
+- **AppImage** — no additional runtime required (self-contained)
 - **curl**, **jq** — for CLI operations
 - **VS Code** with GitHub Copilot extension
 

@@ -121,6 +121,18 @@ class ConPilot:
         return self._paths.retired_dir
 
     @property
+    def system_agents_dir(self) -> str:
+        return self._paths.system_agents_dir
+
+    @property
+    def system_retired_dir(self) -> str:
+        return self._paths.system_retired_dir
+
+    @property
+    def system_logs_dir(self) -> str:
+        return self._paths.system_logs_dir
+
+    @property
     def cron_dir(self) -> str:
         return self._paths.cron_dir
 
@@ -411,9 +423,9 @@ class ConPilot:
             max_inst = instances.max if instances else None
 
             if scope == "system":
-                # System agent - single file in .github/agents/
+                # System agent - single file in .github/system/agents/
                 fname = f"{role}.agent.md"
-                fpath = os.path.join(self.agents_dir, fname)
+                fpath = os.path.join(self.system_agents_dir, fname)
                 exists = os.path.exists(fpath)
 
                 system_agents.append(
@@ -664,7 +676,6 @@ class ConPilot:
     def start_watcher(self) -> int:
         """Spawn ``con-pilot serve`` as a detached background process. Returns its PID."""
         log_path = self.sync_log
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
         with open(log_path, "a") as lf:
             proc = subprocess.Popen(
                 [sys.argv[0], "serve"],
@@ -765,7 +776,7 @@ class ConPilot:
         """
         Return the list of existing .agent.md file paths for a given role.
 
-        For system agents (or when project is None) looks in .github/agents/.
+        For system agents (or when project is None) looks in .github/system/agents/.
         For project agents looks in .github/projects/{project}/agents/.
         """
         scope = self.config.get_agent_dict(role).get("scope", "system")
@@ -774,7 +785,7 @@ class ConPilot:
             # Match role.project.agent.md and role.project.N.agent.md
             prefix = f"{role}.{project}."
         else:
-            search_dir = self.agents_dir
+            search_dir = self.system_agents_dir
             prefix = f"{role}."
 
         if not os.path.isdir(search_dir):
@@ -981,8 +992,9 @@ class ConPilot:
 
     def _ensure_system_agents(self) -> None:
         """Ensure conductor.agent.md and all scope=system agents exist at startup."""
-        os.makedirs(self.agents_dir, exist_ok=True)
-        os.makedirs(self.retired_dir, exist_ok=True)
+        os.makedirs(self.system_agents_dir, exist_ok=True)
+        os.makedirs(self.system_retired_dir, exist_ok=True)
+        os.makedirs(self.system_logs_dir, exist_ok=True)
 
         agent_cfg = self.config.agent_dicts
 
@@ -997,10 +1009,10 @@ class ConPilot:
 
         for role in system_roles:
             fname = f"{role}.agent.md"
-            dest = os.path.join(self.agents_dir, fname)
+            dest = os.path.join(self.system_agents_dir, fname)
             if os.path.exists(dest):
                 continue
-            retired = os.path.join(self.retired_dir, fname)
+            retired = os.path.join(self.system_retired_dir, fname)
             if os.path.exists(retired):
                 shutil.move(retired, dest)
                 log.info("Restored (system): %s", fname)
@@ -1019,7 +1031,7 @@ class ConPilot:
         """
         Reconcile .agent.md files against conductor.json, then dispatch cron jobs.
 
-        System agents (scope=system or no scope) are written to .github/agents/.
+        System agents (scope=system or no scope) are written to .github/system/agents/.
         Project agents (scope=project) are written to
         .github/projects/{project}/agents/, with numbered sub-files when
         instances.max is set.
@@ -1031,8 +1043,8 @@ class ConPilot:
         roles = self.active_roles
         agent_cfg = cfg.agent_dicts
 
-        os.makedirs(self.agents_dir, exist_ok=True)
-        os.makedirs(self.retired_dir, exist_ok=True)
+        os.makedirs(self.system_agents_dir, exist_ok=True)
+        os.makedirs(self.system_retired_dir, exist_ok=True)
 
         # Resolve project once for all project-scoped agents
         project_name: str | None = os.environ.get("PROJECT_NAME") or None
@@ -1048,27 +1060,27 @@ class ConPilot:
             r for r in roles if agent_cfg.get(r, {}).get("scope", "system") == "project"
         ]
 
-        # ── System agents in .github/agents/ ───────────────────────────────────
+        # ── System agents in .github/system/agents/ ────────────────────────────
         expected_system: set[str] = {"conductor.agent.md"}
         for role in system_roles:
             expected_system.add(f"{role}.agent.md")
 
-        for fname in os.listdir(self.agents_dir):
+        for fname in os.listdir(self.system_agents_dir):
             if not fname.endswith(".agent.md") or fname == "conductor.agent.md":
                 continue
             if fname not in expected_system:
                 shutil.move(
-                    os.path.join(self.agents_dir, fname),
-                    os.path.join(self.retired_dir, fname),
+                    os.path.join(self.system_agents_dir, fname),
+                    os.path.join(self.system_retired_dir, fname),
                 )
                 log.info("Retired (system): %s", fname)
 
         for role in system_roles:
             fname = f"{role}.agent.md"
-            dest = os.path.join(self.agents_dir, fname)
+            dest = os.path.join(self.system_agents_dir, fname)
             if os.path.exists(dest):
                 continue
-            retired = os.path.join(self.retired_dir, fname)
+            retired = os.path.join(self.system_retired_dir, fname)
             if os.path.exists(retired):
                 shutil.move(retired, dest)
                 log.info("Restored (system): %s", fname)
@@ -1291,4 +1303,28 @@ class ConPilot:
             cycle,
             self.home,
         )
-        uvicorn.run(app, host=host, port=port)
+        log_config = {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {
+                    "()": "uvicorn.logging.DefaultFormatter",
+                    "fmt": "[con-pilot %(asctime)s] %(levelname)s %(message)s",
+                    "datefmt": "%H:%M:%S",
+                    "use_colors": False,
+                }
+            },
+            "handlers": {
+                "file": {
+                    "class": "logging.FileHandler",
+                    "filename": self._paths.sync_log,
+                    "formatter": "default",
+                }
+            },
+            "loggers": {
+                "uvicorn": {"handlers": ["file"], "level": "INFO", "propagate": False},
+                "uvicorn.error": {"handlers": ["file"], "level": "INFO", "propagate": False},
+                "uvicorn.access": {"handlers": ["file"], "level": "INFO", "propagate": False},
+            },
+        }
+        uvicorn.run(app, host=host, port=port, log_config=log_config)

@@ -11,8 +11,7 @@
 ## Highlights
 
 - **Self-extracting installer** — `setup-__VERSION__.sh` bundles everything into a single file
-- **Full offline bundle** — `setup-__VERSION__-full-bundle.sh` includes Flatpak runtime dependencies
-- **Flatpak packaging** — `con-pilot` runs sandboxed with Python 3.14 and uv-based bootstrap
+- **AppImage packaging** — `con-pilot` runs as a portable AppImage with uv-based bootstrap
 - **Full CLI** — the `conduct` command wraps all lifecycle operations
 - **HTTP API** — FastAPI-powered service for programmatic access
 
@@ -60,8 +59,8 @@
 ### Installation
 - `./setup-__VERSION__.sh install [CONDUCTOR_HOME]` — Full installation
 - `./setup-__VERSION__.sh update` — Update existing installation
-- `./setup-__VERSION__.sh uninstall` — Clean removal (same effect as `uninstall.sh`)
-- `uninstall.sh` — Standalone uninstaller (same effect as `setup-__VERSION__.sh uninstall`)
+- `./setup-__VERSION__.sh uninstall` — Clean removal (same effect as `uninstall-conductor.sh`)
+- `uninstall-conductor.sh` — Standalone uninstaller (same effect as `setup-__VERSION__.sh uninstall`)
 - Environment variables persisted in `~/.bashrc`
 
 ### Cron Scheduling
@@ -93,7 +92,7 @@ conduct status
 ## Requirements
 
 - **Linux** (tested on Ubuntu 22.04+, Fedora 38+)
-- **Flatpak** — [Installation guide](https://flatpak.org/setup/)
+- **AppImage** — no additional runtime required (self-contained)
 - **curl**, **jq** — for CLI operations
 - **VS Code** with GitHub Copilot extension
 

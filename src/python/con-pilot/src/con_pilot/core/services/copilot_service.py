@@ -28,14 +28,15 @@ from copilot.generated.session_events import (
     PermissionRequest,
     SessionIdleData,
 )
+from copilot.logger import logger as copilot_logger
+from copilot.permissions import PermissionRequestResult
 from copilot.session import PermissionHandler, PermissionRequestResult
 
 from con_pilot.core.models import AgentConfig, AgentPermissions
 
 HAS_COPILOT_SDK = True
 
-log = logging.getLogger(__name__)
-
+log = copilot_logger.bind(component="CopilotAgentService")
 
 class SpawnAgentParams(BaseModel):
     """Parameters for spawning a new agent."""
@@ -131,7 +132,7 @@ class CopilotAgentService:
                 "COPILOT_DEFAULT_MODEL": self._pilot.default_model,
             },
         )
-
+        log.info(f"Initializing Copilot client with config: {config}")
         self._client = CopilotClient(config)
         await self._client.start()
 

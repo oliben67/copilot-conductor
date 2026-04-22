@@ -1,0 +1,86 @@
+{
+  "name": "conductor-home",
+  "displayName": "Conductor Home",
+  "description": "Configure and manage the Conductor home directory",
+  "version": "0.1.0",
+  "publisher": "oliben67",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oliben67/copilot-conductor.git",
+    "directory": "src/vscode/conductor-home"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "icon": "icons/icon.png",
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Conductor",
+      "properties": {
+        "conductor.home": {
+          "type": "string",
+          "default": "~/.conductor",
+          "markdownDescription": "Path to the Conductor home directory. Supports `~` for the user's home directory. Defaults to `~/.conductor`.",
+          "scope": "machine-overridable",
+          "order": 1
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "conductor.openHome",
+        "title": "Open Conductor Home",
+        "category": "Conductor",
+        "icon": "$(home)"
+      },
+      {
+        "command": "conductor.selectHome",
+        "title": "Select Conductor Home Directory",
+        "category": "Conductor",
+        "icon": "$(folder-opened)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "conductor.openHome"
+        },
+        {
+          "command": "conductor.selectHome"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "compile:check": "tsc -p tsconfig.json --noEmit",
+    "watch": "tsc -p tsconfig.json --watch",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:integration": "vscode-test",
+    "test": "npm run compile:check && npm run lint && npm run test:unit && npm run test:integration",
+    "test:ci": "npm run compile:check && npm run lint && npm run test:unit",
+    "build": "rimraf dist && npm run compile",
+    "clean": "rimraf dist releases/*.vsix",
+    "package": "npm run build && vsce package --out releases/",
+    "deploy": "code --install-extension releases/conductor-home-$(node -p \"require('./package.json').version\").vsix"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.0",
+    "@vscode/vsce": "^3.0.0",
+    "eslint": "^9.0.0",
+    "rimraf": "^6.0.0",
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^2.0.0"
+  }
+}

@@ -79,12 +79,14 @@ def _run(
 def home(tmp_path: Path) -> Path:
     """Isolated CONDUCTOR_HOME with minimal layout."""
     (tmp_path / "conductor.json").write_text(json.dumps(_CONFIG, indent=2))
-    agents = tmp_path / ".github" / "agents"
-    agents.mkdir(parents=True)
-    (agents / "conductor.agent.md").write_text(
+    (tmp_path / ".github" / "agents").mkdir(parents=True)
+    system_agents = tmp_path / ".github" / "system" / "agents"
+    system_agents.mkdir(parents=True)
+    (system_agents / "conductor.agent.md").write_text(
         '---\nname: "uppity"\nmodel: "test-model"\n---\n'
     )
-    (agents / "retired").mkdir()
+    (system_agents / "retired").mkdir()
+    (system_agents / "logs").mkdir()
     (tmp_path / ".github" / "trust.json").write_text(
         json.dumps({"conductor": str(tmp_path)}, indent=2)
     )
@@ -139,30 +141,30 @@ class TestListAgents:
 class TestSync:
     def test_creates_system_agents(self, home: Path) -> None:
         _run("sync", home=home)
-        assert (home / ".github" / "agents" / "support.agent.md").exists()
-        assert (home / ".github" / "agents" / "arbitrator.agent.md").exists()
+        assert (home / ".github" / "system" / "agents" / "support.agent.md").exists()
+        assert (home / ".github" / "system" / "agents" / "arbitrator.agent.md").exists()
 
     def test_does_not_overwrite_conductor(self, home: Path) -> None:
-        conductor = home / ".github" / "agents" / "conductor.agent.md"
+        conductor = home / ".github" / "system" / "agents" / "conductor.agent.md"
         original = conductor.read_text()
         _run("sync", home=home)
         assert conductor.read_text() == original
 
     def test_retires_unknown_agent(self, home: Path) -> None:
-        ghost = home / ".github" / "agents" / "ghost.agent.md"
+        ghost = home / ".github" / "system" / "agents" / "ghost.agent.md"
         ghost.write_text("---\nname: ghost\n---\n")
         _run("sync", home=home)
         assert not ghost.exists()
-        assert (home / ".github" / "agents" / "retired" / "ghost.agent.md").exists()
+        assert (home / ".github" / "system" / "agents" / "retired" / "ghost.agent.md").exists()
 
     def test_restores_retired_agent(self, home: Path) -> None:
-        (home / ".github" / "agents" / "retired" / "support.agent.md").write_text(
+        (home / ".github" / "system" / "agents" / "retired" / "support.agent.md").write_text(
             '---\nname: "dogsbody"\nmodel: "test-model"\n---\n'
         )
         _run("sync", home=home)
-        assert (home / ".github" / "agents" / "support.agent.md").exists()
+        assert (home / ".github" / "system" / "agents" / "support.agent.md").exists()
         assert not (
-            home / ".github" / "agents" / "retired" / "support.agent.md"
+            home / ".github" / "system" / "agents" / "retired" / "support.agent.md"
         ).exists()
 
     def test_creates_project_agents(self, home: Path) -> None:
@@ -178,9 +180,9 @@ class TestSync:
 
     def test_idempotent(self, home: Path) -> None:
         _run("sync", home=home)
-        agents_before = set((home / ".github" / "agents").glob("*.agent.md"))
+        agents_before = set((home / ".github" / "system" / "agents").glob("*.agent.md"))
         _run("sync", home=home)
-        agents_after = set((home / ".github" / "agents").glob("*.agent.md"))
+        agents_after = set((home / ".github" / "system" / "agents").glob("*.agent.md"))
         assert agents_before == agents_after
 
 
@@ -346,7 +348,7 @@ class TestAmend:
         key_file = home / "python" / "con-pilot" / "key"
         key = key_file.read_text().strip()
         _run("amend", str(instr), "support", "--key", key, home=home)
-        content = (home / ".github" / "agents" / "support.agent.md").read_text()
+        content = (home / ".github" / "system" / "agents" / "support.agent.md").read_text()
         assert "## Instructions" in content
         assert "- Be helpful." in content
 

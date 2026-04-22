@@ -7,7 +7,6 @@ set -euo pipefail
 
 VERSION="__VERSION__"
 CON_PILOT_VERSION="__CON_PILOT_VERSION__"
-APP_ID="io.conductor.ConPilot"
 BASHRC="$HOME/.bashrc"
 DEFAULT_HOME="$HOME/.conductor"
 
@@ -39,7 +38,6 @@ EOF
 # ── GitHub token ──────────────────────────────────────────────────────────────
 
 resolve_github_token() {
-  # Check for existing token env vars in priority order
   local token="${COPILOT_GITHUB_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
   if [[ -n "$token" ]]; then
     echo "$token"
@@ -76,18 +74,9 @@ require_github_token() {
   exit 1
 }
 
-require_flatpak() {
-  if ! command -v flatpak >/dev/null 2>&1; then
-    echo "Error: Flatpak is not installed." >&2
-    echo "Install it first:  https://flatpak.org/setup/" >&2
-    exit 1
-  fi
-}
-
-# ── Flatpak ───────────────────────────────────────────────────────────────────
+# ── Archive helpers ───────────────────────────────────────────────────────────
 
 archive_line() {
-  # Line number where the tar.gz payload begins
   awk '/^__ARCHIVE__$/{print NR + 1; exit 0}' "$0"
 }
 
@@ -106,58 +95,27 @@ persist_var() {
   fi
 }
 
-ensure_flatpak_runtime() {
-  if ! flatpak --user info org.freedesktop.Platform//24.08 &>/dev/null; then
-    echo "Installing Flatpak runtime (org.freedesktop.Platform 24.08)…"
-    flatpak --user install -y flathub org.freedesktop.Platform//24.08
-  fi
-}
+# ── AppImage install ──────────────────────────────────────────────────────────
 
-install_flatpak() {
+install_appimage() {
   local conductor_home="$1" force="${2:-false}"
-  local bundle="${conductor_home}/python/con-pilot/dist/io.conductor.ConPilot.flatpak"
+  local appimage="${conductor_home}/con-pilot.AppImage"
 
-  if [[ ! -f "$bundle" ]]; then
-    echo "Error: Flatpak bundle not found at ${bundle}" >&2
+  if [[ ! -f "$appimage" ]]; then
+    echo "Error: AppImage not found at ${appimage}" >&2
     exit 1
   fi
 
-  ensure_flatpak_runtime
-
-  if flatpak --user info "$APP_ID" &>/dev/null; then
-    if [[ "$force" == true ]]; then
-      echo "Removing existing Flatpak…"
-      flatpak --user uninstall -y "$APP_ID" 2>/dev/null || true
-      rm -rf "$HOME/.var/app/${APP_ID}"
-    else
-      echo "con-pilot Flatpak is already installed. Use 'update' to upgrade."
-      return 0
-    fi
-  fi
-
-  echo "Installing Flatpak from ${bundle}…"
-  flatpak --user install --noninteractive "$bundle"
-
-  local host="${CON_PILOT_HOST:-localhost}"
-  local port="${CON_PILOT_PORT:-8000}"
-  local token="${COPILOT_GITHUB_TOKEN:-}"
-  flatpak --user override \
-    --env=CONDUCTOR_HOME="$conductor_home" \
-    --env=CON_PILOT_HOST="$host" \
-    --env=CON_PILOT_PORT="$port" \
-    --env=COPILOT_GITHUB_TOKEN="$token" \
-    "$APP_ID"
-  echo "Forwarded env vars into the Flatpak sandbox."
+  chmod +x "$appimage"
+  echo "AppImage ready at ${appimage}."
 }
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 cmd_install() {
-  require_flatpak
   local conductor_home="${1:-}"
   local github_token="${2:-}"
 
-  # If no argument provided, check if CONDUCTOR_HOME is already set
   if [[ -z "$conductor_home" ]]; then
     if [[ -n "${CONDUCTOR_HOME:-}" ]]; then
       echo "CONDUCTOR_HOME is already set to: ${CONDUCTOR_HOME}"
@@ -176,7 +134,6 @@ cmd_install() {
     fi
   fi
 
-  # Require GitHub token (from env or argument)
   require_github_token "$github_token"
 
   echo "Installing Conductor v${VERSION} to ${conductor_home}…"
@@ -197,35 +154,18 @@ cmd_install() {
     rm -f "${conductor_home}/conduct.bash-completion"
     echo "Bash completion installed to ${completion_dir}/conduct"
   fi
-  # Also add to PATH if not already there
-  if ! grep -q "PATH=.*${conductor_h[tool.ruff]
-line-length = 100
-target-version = "py313"
 
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM"]
-ignore = []
-
-[tool.ruff.lint.per-file-ignores]
-"src/con_pilot/conductor.py" = ["E501"]  # long lines inside docstrings and Markdown templates
-
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-docstring-code-format = true
-ome}" "$BASHRC" 2>/dev/null; then
+  # Add CONDUCTOR_HOME to PATH if not already there
+  if ! grep -q "PATH=.*${conductor_home}" "$BASHRC" 2>/dev/null; then
     echo "export PATH=\"\$PATH:${conductor_home}\"" >> "$BASHRC"
   fi
 
   echo "Environment variables persisted in ${BASHRC}."
 
-  install_flatpak "$conductor_home" false
+  export CONDUCTOR_HOME="$conductor_home"
+  install_appimage "$conductor_home" false
   start_and_healthcheck
   show_key
-
-  # Clean up: leave only conduct, README.md, uninstall.sh
-  rm -rf "${conductor_home}/python"
-  echo "Cleaned up installation files."
 
   echo ""
   echo "Conductor v${VERSION} installed successfully."
@@ -233,7 +173,6 @@ ome}" "$BASHRC" 2>/dev/null; then
 }
 
 cmd_update() {
-  require_flatpak
   local conductor_home="${CONDUCTOR_HOME:-}"
   if [[ -z "$conductor_home" ]]; then
     echo "Error: CONDUCTOR_HOME is not set. Run 'source ~/.bashrc' or install first." >&2
@@ -242,7 +181,6 @@ cmd_update() {
 
   echo "Updating Conductor to v${VERSION}…"
 
-  # Stop server before update
   if pgrep -f 'con-pilot serve' >/dev/null 2>&1; then
     pkill -f 'con-pilot serve' || true
     echo "Stopped running con-pilot serve."
@@ -250,6 +188,8 @@ cmd_update() {
 
   extract_to "$conductor_home"
   echo "Extracted v${VERSION} to ${conductor_home}."
+
+  export CONDUCTOR_HOME="$conductor_home"
 
   # Update bash completion
   local completion_dir="$HOME/.local/share/bash-completion/completions"
@@ -260,13 +200,9 @@ cmd_update() {
     echo "Bash completion updated."
   fi
 
-  install_flatpak "$conductor_home" true
+  install_appimage "$conductor_home" true
   start_and_healthcheck
   show_key
-
-  # Clean up: leave only conduct, README.md, uninstall.sh
-  rm -rf "${conductor_home}/python"
-  echo "Cleaned up installation files."
 
   echo ""
   echo "Conductor updated to v${VERSION}."

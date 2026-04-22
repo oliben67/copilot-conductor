@@ -84,14 +84,13 @@ Usage:
   conduct start [options]
 
 Description:
-  Starts the con-pilot service as a background process using Flatpak.
+  Starts the con-pilot service as a background process using the AppImage.
   If the service is already running, this command does nothing.
 
 Options:
   --help, -h    Show this help message
 
 Environment:
-  APP_ID          Flatpak application ID (default: io.conductor.ConPilot)
   CONDUCTOR_HOME  Base directory for conductor (default: ~/.conductor)
   CON_PILOT_HOST  Service host (default: localhost)
   CON_PILOT_PORT  Service port (default: 8000)
@@ -146,14 +145,11 @@ Usage:
   conduct sync
 
 Description:
-  Runs a single agent synchronization cycle immediately using Flatpak.
+  Runs a single agent synchronization cycle immediately using the AppImage.
   This will update agent files based on the current conductor.json configuration.
 
 Options:
   --help, -h    Show this help message
-
-Environment:
-  APP_ID    Flatpak application ID (default: io.conductor.ConPilot)
 
 Example:
   conduct sync
@@ -180,7 +176,7 @@ Environment:
   CONDUCTOR_HOME    Base directory for conductor (default: ~/.conductor)
 
 Log location:
-  \$CONDUCTOR_HOME/.github/scripts/sync_agents.log
+  \$CONDUCTOR_HOME/con-pilot.log
 
 Examples:
   conduct logs
@@ -290,17 +286,22 @@ cmd_start() {
     esac
   done
 
-  local APP_ID="${APP_ID:-io.conductor.ConPilot}"
   local CONDUCTOR_HOME="${CONDUCTOR_HOME:-$HOME/.conductor}"
+  local APPIMAGE="$CONDUCTOR_HOME/con-pilot.AppImage"
 
   if pgrep -f 'con-pilot serve' >/dev/null 2>&1; then
     echo "con-pilot is already running."
     return 0
   fi
 
-  local LOG="$CONDUCTOR_HOME/.github/scripts/sync_agents.log"
+  if [[ ! -x "$APPIMAGE" ]]; then
+    echo "Error: AppImage not found at $APPIMAGE" >&2
+    exit 1
+  fi
+
+  local LOG="$CONDUCTOR_HOME/con-pilot.log"
   mkdir -p "$(dirname "$LOG")"
-  setsid flatpak run "$APP_ID" serve "$@" >> "$LOG" 2>&1 &
+  setsid "$APPIMAGE" serve "$@" >> "$LOG" 2>&1 &
   local PID=$!
   echo "con-pilot started (PID $PID), logging to $LOG"
 
@@ -360,8 +361,9 @@ cmd_sync() {
       -h|--help) usage_sync; exit 0 ;;
     esac
   done
-  local APP_ID="${APP_ID:-io.conductor.ConPilot}"
-  flatpak run "$APP_ID" sync
+  local CONDUCTOR_HOME="${CONDUCTOR_HOME:-$HOME/.conductor}"
+  local APPIMAGE="$CONDUCTOR_HOME/con-pilot.AppImage"
+  "$APPIMAGE" sync >> "$CONDUCTOR_HOME/con-pilot.log" 2>&1
 }
 
 cmd_logs() {
@@ -375,7 +377,7 @@ cmd_logs() {
     esac
   done
   local CONDUCTOR_HOME="${CONDUCTOR_HOME:-$HOME/.conductor}"
-  local LOG="$CONDUCTOR_HOME/.github/scripts/sync_agents.log"
+  local LOG="$CONDUCTOR_HOME/con-pilot.log"
   if [[ ! -f "$LOG" ]]; then
     mkdir -p "$(dirname "$LOG")"
     touch "$LOG"

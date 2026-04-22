@@ -38,3 +38,10 @@ key
 
 # Copilot session logs
 .copilot/
+
+# VS Code extension — generated and local-only files
+src/vscode/conductor-home/node_modules/
+src/vscode/conductor-home/dist/
+src/vscode/conductor-home/.vscode-test/
+src/vscode/conductor-home/.task/
+src/vscode/conductor-home/package-lock.json

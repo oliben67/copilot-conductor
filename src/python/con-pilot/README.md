@@ -4,7 +4,7 @@
 
 `con-pilot` is a Python 3.14 package that keeps your VS Code Copilot agent roster in sync with `conductor.yaml`, dispatches scheduled cron tasks, and exposes every lifecycle operation as both a CLI and a FastAPI service.
 
-**Deployed as a Flatpak** (`io.conductor.ConPilot`) with uv-based bootstrap — the first run installs a sandboxed Python environment and all dependencies in under 100 ms.
+**Deployed as an AppImage** with uv-based bootstrap — the first run installs a portable Python environment and all dependencies in under 100 ms.
 
 ---
 
@@ -18,7 +18,7 @@
 ./setup-0.3.0.sh install ~/.conductor
 ```
 
-This installs the Flatpak bundle, which bootstraps Python 3.14 + all dependencies on first run.
+This installs the con-pilot AppImage, which bootstraps Python + all dependencies on first run.
 
 ### From source (development)
 
@@ -310,21 +310,20 @@ python3 -m pytest tests/ -v --cov=con_pilot --cov-report=term-missing
 # Lint + format (via uv)
 uv run ruff check src/ && uv run ruff format src/
 
-# Build the Flatpak (from the repo root)
-CONDUCTOR_HOME=$(pwd) task build
+# Build the AppImage (from the repo root)
+CONDUCTOR_HOME=$(pwd) task appimage:build
 ```
 
-### Flatpak build
+### AppImage build
 
-The Flatpak bundles con-pilot with a uv-based launcher. On first run it creates a sandboxed venv and installs all wheels from the bundle:
+The AppImage bundles con-pilot with a uv-based launcher (`AppRun`). On first run it creates a portable venv and installs all wheels from the bundle:
 
 ```mermaid
 flowchart LR
-    FB["flatpak-builder"]
-    FB --> SDK["org.freedesktop.Platform 24.08"]
-    FB --> UV["uv (standalone binary)"]
-    FB --> WHL["pre-built wheels"]
-    FB --> LAUNCH["con-pilot-launcher.sh"]
+    AT["appimagetool"]
+    AT --> UV["uv (standalone binary)"]
+    AT --> WHL["pre-built wheels"]
+    AT --> LAUNCH["AppRun"]
     LAUNCH -->|"first run"| BOOT["uv venv + uv pip install"]
     LAUNCH -->|"subsequent"| RUN["uv run con-pilot"]
 ```

@@ -5,6 +5,8 @@ Provides tar.gz snapshots of the .github directory with change detection
 for automatic backups when monitored files (md, cron, json, yaml) change.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
@@ -15,12 +17,10 @@ import time
 from datetime import UTC, datetime
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
-    from con_pilot.paths import PathResolver
+from con_pilot.paths import PathResolver
 
 log = logging.getLogger(__name__)
 

@@ -1,0 +1,17 @@
+.vscode/**
+.gitignore
+.vscode-test.mjs
+eslint.config.mjs
+vitest.config.ts
+Taskfile.yml
+.task/**
+VERSION
+releases/**
+src/**
+tsconfig.json
+tests/**
+**/*.map
+**/*.ts
+!dist/**
+node_modules/**
+icons/icon.svg

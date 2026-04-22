@@ -2,18 +2,27 @@ version: "3"
 
 vars:
   CON_PILOT_DIR: "{{.ROOT_DIR}}/src/python/con-pilot"
-  FLATPAK_DIR: "{{.CON_PILOT_DIR}}/flatpak"
   VENV: "{{.CON_PILOT_DIR}}/.venv"
   CON_PILOT: "{{.VENV}}/bin/con-pilot"
   PYTHON: "{{.VENV}}/bin/python"
-  APP_ID: io.conductor.ConPilot
-  BUNDLE: "{{.CON_PILOT_DIR}}/dist/io.conductor.ConPilot.flatpak"
   KEY_FILE: "{{.CON_PILOT_DIR}}/key"
+  APPIMAGE_DIR: "{{.CON_PILOT_DIR}}/appimage"
+  APPIMAGETOOL_VERSION: "continuous"
   BASHRC: "{{.HOME}}/.bashrc"
-  RUNTIME_VERSION: "24.08"
   UV_VERSION: "0.10.12"
+  PYTHON_VERSION:
+    sh: cat "{{.ROOT_DIR}}/src/python/con-pilot/.python-version" | tr -d '[:space:]'
+  PYTHON_VER_DOTLESS:
+    sh: echo "${PYTHON_VERSION//./}"
+  # Bundled release version is pegged to con-pilot
   VERSION:
-    sh: cat "{{.ROOT_DIR}}/VERSION" | tr -d '[:space:]'
+    sh: cat "{{.ROOT_DIR}}/src/python/con-pilot/VERSION" | tr -d '[:space:]'
+  # Per-application versions
+  CONDUCTOR_CLI_VERSION:
+    sh: cat "{{.ROOT_DIR}}/src/conductor-cli/VERSION" | tr -d '[:space:]'
+  CONDUCTOR_HOME_VERSION:
+    sh: node -p "require('{{.ROOT_DIR}}/src/vscode/conductor-home/package.json').version" 2>/dev/null || echo "0.0.0"
+  APPIMAGE_BUNDLE: "{{.CON_PILOT_DIR}}/dist/con-pilot-{{.VERSION}}-x86_64.AppImage"
   CONDUCTOR_HOME:
     sh: echo "${CONDUCTOR_HOME:-$HOME/.conductor}"
   CON_PILOT_HOST:
@@ -29,10 +38,10 @@ tasks:
   # ── Install / Uninstall ─────────────────────────────────────────────────────
 
   install:
-    desc: "Install the con-pilot Flatpak, configure env, start service. Pass -- --force to reinstall."
+    desc: "Install con-pilot AppImage, configure env, start service. Pass -- --force to reinstall."
     cmds:
       - task: _install-env
-      - task: _install-flatpak
+      - task: _install-appimage
       - task: _install-start
       - task: _install-show-key
       - task: _install-smoke-test
@@ -62,74 +71,68 @@ tasks:
           cp "{{.ROOT_DIR}}/conductor.yaml"             "{{.CONDUCTOR_HOME}}/conductor.yaml"
           cp "{{.ROOT_DIR}}/README.md"                  "{{.CONDUCTOR_HOME}}/README.md"
           cp "{{.ROOT_DIR}}/conduct"                    "{{.CONDUCTOR_HOME}}/conduct"
-          cp "{{.ROOT_DIR}}/src/scripts/uninstall.sh"   "{{.CONDUCTOR_HOME}}/uninstall.sh"
-          chmod +x "{{.CONDUCTOR_HOME}}/conduct" "{{.CONDUCTOR_HOME}}/uninstall.sh"
+          cp "{{.ROOT_DIR}}/src/conductor-cli/uninstall-conductor.sh"   "{{.CONDUCTOR_HOME}}/uninstall-conductor.sh"
+          chmod +x "{{.CONDUCTOR_HOME}}/conduct" "{{.CONDUCTOR_HOME}}/uninstall-conductor.sh"
+          rsync -a --exclude='.not-deployed' "{{.ROOT_DIR}}/.github/" "{{.CONDUCTOR_HOME}}/.github/"
           # Install bash completion
           COMPLETION_DIR="$HOME/.local/share/bash-completion/completions"
           mkdir -p "$COMPLETION_DIR"
           cp "{{.ROOT_DIR}}/conduct.bash-completion" "$COMPLETION_DIR/conduct"
-          echo "Copied conduct, uninstall.sh, conductor.yaml, README.md to {{.CONDUCTOR_HOME}}."
+          echo "Copied conduct, uninstall-conductor.sh, conductor.yaml, README.md to {{.CONDUCTOR_HOME}}."
           echo "Bash completion installed to ${COMPLETION_DIR}/conduct."
         fi
 
-  _install-flatpak:
+  _install-appimage:
     internal: true
-    desc: Install the Flatpak bundle and forward env vars to sandbox.
+    desc: Install the AppImage binary into CONDUCTOR_HOME.
     cmds:
       - |
-        if [[ ! -f "{{.BUNDLE}}" ]]; then
-          echo "Error: Flatpak bundle not found at {{.BUNDLE}}"
-          echo "Build it first with:  task build-all"
+        APPIMAGE="{{.APPIMAGE_BUNDLE}}"
+        if [[ ! -f "$APPIMAGE" ]]; then
+          echo "Error: AppImage not found at ${APPIMAGE}"
+          echo "Build it first with:  task appimage:build"
           exit 1
         fi
 
         FORCE=false
         case "{{.CLI_ARGS}}" in *--force*|*-ff*) FORCE=true ;; esac
 
-        if flatpak --user info "{{.APP_ID}}" &>/dev/null; then
-          if [[ "$FORCE" == true ]]; then
-            echo "Reinstalling con-pilot Flatpak…"
-            flatpak --user uninstall -y "{{.APP_ID}}" 2>/dev/null || true
-            rm -rf "$HOME/.var/app/{{.APP_ID}}"
-            flatpak --user install --noninteractive "{{.BUNDLE}}"
-          else
-            echo "con-pilot Flatpak is already installed. Use -- --force to reinstall."
-          fi
+        DEST="{{.CONDUCTOR_HOME}}/con-pilot.AppImage"
+        if [[ -f "$DEST" ]] && [[ "$FORCE" != true ]]; then
+          echo "con-pilot AppImage is already installed at $DEST. Use -- --force to reinstall."
         else
-          echo "Installing con-pilot Flatpak from {{.BUNDLE}}…"
-          flatpak --user install --noninteractive "{{.BUNDLE}}"
+          cp "$APPIMAGE" "$DEST"
+          chmod +x "$DEST"
+          echo "Installed AppImage to $DEST."
         fi
-
-        flatpak --user override \
-          --env=CONDUCTOR_HOME="{{.CONDUCTOR_HOME}}" \
-          --env=CON_PILOT_HOST="{{.CON_PILOT_HOST}}" \
-          --env=CON_PILOT_PORT="{{.CON_PILOT_PORT}}" \
-          "{{.APP_ID}}"
-        echo "Forwarded env vars into the Flatpak sandbox."
 
   _install-start:
     internal: true
     desc: Start con-pilot serve and wait for health check.
     cmds:
       - |
-        flatpak run "{{.APP_ID}}" serve &
+        LOG="{{.CONDUCTOR_HOME}}/con-pilot.log"
+        # Stop any existing instance
+        pkill -f "con-pilot.*serve" 2>/dev/null || true
+        sleep 1
+        setsid "{{.CONDUCTOR_HOME}}/con-pilot.AppImage" serve >> "$LOG" 2>&1 &
         SERVER_PID=$!
         HEALTH_URL="http://{{.CON_PILOT_HOST}}:{{.CON_PILOT_PORT}}/health"
         echo "Waiting for $HEALTH_URL …"
-        for i in $(seq 1 15); do
+        for i in $(seq 1 20); do
           if curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
-            echo "Health check passed — con-pilot is running (PID $SERVER_PID)."
+            echo "Health check passed — con-pilot is running. Logs: $LOG"
             break
           fi
-          if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-            echo "Error: con-pilot process exited unexpectedly."
+          # The AppImage launcher forks and exits; check for the spawned con-pilot process
+          if [[ $i -gt 5 ]] && ! pgrep -f "con-pilot serve" >/dev/null 2>&1; then
+            echo "Error: con-pilot process exited unexpectedly. Check $LOG"
             exit 1
           fi
           sleep 1
         done
         if ! curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
-          echo "Error: con-pilot did not become healthy after 15s."
-          kill "$SERVER_PID" 2>/dev/null || true
+          echo "Error: con-pilot did not become healthy after 20s. Check $LOG"
           exit 1
         fi
 
@@ -198,7 +201,7 @@ tasks:
         echo ""
 
   uninstall:
-    desc: Stop server, remove Flatpak, clean .bashrc, remove sandbox data.
+    desc: Stop server, remove AppImage, clean .bashrc, remove venv data.
     cmds:
       - |
         echo "Uninstalling con-pilot…"
@@ -211,12 +214,11 @@ tasks:
           echo "No running con-pilot serve process found."
         fi
 
-        # Remove Flatpak
-        if flatpak --user info "{{.APP_ID}}" &>/dev/null; then
-          flatpak --user uninstall -y "{{.APP_ID}}"
-          echo "Removed Flatpak {{.APP_ID}}."
-        else
-          echo "Flatpak {{.APP_ID}} is not installed — skipping."
+        # Remove AppImage
+        APPIMAGE="{{.CONDUCTOR_HOME}}/con-pilot.AppImage"
+        if [[ -f "$APPIMAGE" ]]; then
+          rm -f "$APPIMAGE"
+          echo "Removed AppImage at $APPIMAGE."
         fi
 
         # Clean .bashrc
@@ -228,17 +230,11 @@ tasks:
           echo "Removed env vars from {{.BASHRC}}."
         fi
 
-        # Clean up venvs and sandbox data
+        # Clean up bootstrap venv data
         VENV_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/con-pilot"
         if [[ -d "$VENV_DIR" ]]; then
           rm -rf "$VENV_DIR"
           echo "Removed bootstrap venv at $VENV_DIR."
-        fi
-
-        FLATPAK_DATA="$HOME/.var/app/{{.APP_ID}}"
-        if [[ -d "$FLATPAK_DATA" ]]; then
-          rm -rf "$FLATPAK_DATA"
-          echo "Removed Flatpak sandbox data at $FLATPAK_DATA."
         fi
 
         echo ""
@@ -247,7 +243,7 @@ tasks:
   # ── Run ─────────────────────────────────────────────────────────────────────
 
   start:
-    desc: Start con-pilot in production mode via Flatpak.
+    desc: Start con-pilot in production mode via AppImage.
     cmds:
       - "{{.ROOT_DIR}}/conduct start {{.CLI_ARGS}}"
 
@@ -271,9 +267,8 @@ tasks:
           sleep 1
         fi
       - |
-        LOG="{{.CONDUCTOR_HOME}}/.github/scripts/sync_agents.log"
-        mkdir -p "$(dirname "$LOG")"
-        nohup flatpak run "{{.APP_ID}}" serve \
+        LOG="{{.CONDUCTOR_HOME}}/con-pilot.log"
+        setsid "{{.CONDUCTOR_HOME}}/con-pilot.AppImage" serve \
           >> "$LOG" 2>&1 &
         echo "con-pilot started (PID $!), logging to $LOG"
 
@@ -295,7 +290,7 @@ tasks:
       - "{{.ROOT_DIR}}/conduct sync"
 
   logs:
-    desc: Tail the sync_agents log.
+    desc: Tail the con-pilot log.
     cmds:
       - "{{.ROOT_DIR}}/conduct logs"
 
@@ -328,7 +323,7 @@ tasks:
   test:bats:
     desc: Run BATS shell function tests.
     cmds:
-      - bats {{.ROOT_DIR}}/src/scripts/tests/
+      - bats {{.ROOT_DIR}}/src/conductor-cli/tests/
 
   test:pytest:
     desc: Run the Python test suite with pytest.
@@ -350,163 +345,146 @@ tasks:
       - task: test
 
   build:
-    desc: "Run lint, tests, build Flatpak, and package into setup.sh."
+    desc: "Run lint, tests, build AppImage, and package into setup.sh."
     cmds:
       - task: lint
       - task: test
-      - task: flatpak
+      - task: appimage
       - task: release:package
 
-  # ── Flatpak ─────────────────────────────────────────────────────────────────
+  # ── AppImage ─────────────────────────────────────────────────────────────────
 
-  flatpak:deps:
+  appimage:deps:
     desc: >
       Build the con-pilot wheel and download all dependency wheels into
-      flatpak/deps/ for an offline Flatpak build.
+      appimage/deps/ for an offline AppImage build.
     dir: "{{.CON_PILOT_DIR}}"
     cmds:
-      - rm -rf flatpak/deps && mkdir -p flatpak/deps
-      - uv build --wheel --out-dir flatpak/deps .
+      - rm -rf appimage/deps && mkdir -p appimage/deps
+      - uv build --wheel --out-dir appimage/deps .
       - >-
-        uv run pip download
-        -d flatpak/deps
+        uv run --with pip pip download
+        -d appimage/deps
         --only-binary=:all:
-        --python-version 3.14
-        --abi cp314
-        --platform manylinux2014_x86_64
-        fastapi "uvicorn[standard]" croniter jsonschema
+        fastapi "uvicorn[standard]" croniter jsonschema structlog
     sources:
       - "{{.CON_PILOT_DIR}}/pyproject.toml"
     generates:
-      - "{{.CON_PILOT_DIR}}/flatpak/deps/*.whl"
+      - "{{.CON_PILOT_DIR}}/appimage/deps/*.whl"
 
-  flatpak:deps:offline:
-    desc: >
-      Export Flatpak runtimes and download uv tarball for fully offline installation.
-      Requires org.freedesktop.Platform and Sdk {{.RUNTIME_VERSION}} to be installed.
+  _appimage-appdir:
+    internal: true
+    desc: Build the AppDir structure (AppRun, desktop, icon, uv binary, wheels).
     dir: "{{.CON_PILOT_DIR}}"
     cmds:
-      - mkdir -p dist/offline
       - |
-        echo "Exporting org.freedesktop.Platform//{{.RUNTIME_VERSION}}…"
-        if ! flatpak --user info org.freedesktop.Platform//{{.RUNTIME_VERSION}} &>/dev/null; then
-          echo "Installing runtime from flathub first…"
-          flatpak --user install -y flathub org.freedesktop.Platform//{{.RUNTIME_VERSION}}
+        set -e
+        APPDIR="appimage/AppDir"
+        rm -rf "$APPDIR"
+        mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/con-pilot/wheels"
+
+        # AppRun entry point
+        cp appimage/AppRun "$APPDIR/AppRun"
+        chmod +x "$APPDIR/AppRun"
+
+        # Desktop entry
+        cp appimage/io.conductor.ConPilot.desktop "$APPDIR/io.conductor.ConPilot.desktop"
+
+        # Icon — try ImageMagick, fall back to a minimal valid PNG
+        if command -v convert >/dev/null 2>&1; then
+          convert -size 256x256 xc:'#2d2d2d' \
+            -fill white -font DejaVu-Sans-Bold -pointsize 56 \
+            -gravity center -annotate 0 "CP" \
+            "$APPDIR/io.conductor.ConPilot.png" 2>/dev/null || true
         fi
-        flatpak build-bundle \
-          --runtime \
-          ~/.local/share/flatpak/repo \
-          dist/offline/org.freedesktop.Platform-{{.RUNTIME_VERSION}}.flatpak \
-          org.freedesktop.Platform \
-          {{.RUNTIME_VERSION}}
-      - |
-        echo "Exporting org.freedesktop.Sdk//{{.RUNTIME_VERSION}}…"
-        if ! flatpak --user info org.freedesktop.Sdk//{{.RUNTIME_VERSION}} &>/dev/null; then
-          echo "Installing SDK from flathub first…"
-          flatpak --user install -y flathub org.freedesktop.Sdk//{{.RUNTIME_VERSION}}
+        if [[ ! -f "$APPDIR/io.conductor.ConPilot.png" ]]; then
+          # Minimal 1×1 transparent PNG (base64-encoded)
+          python3 -c "
+        import base64, sys
+        sys.stdout.buffer.write(base64.b64decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQ'
+          'AABjkB6QAAAABJRU5ErkJggg=='
+        ))" > "$APPDIR/io.conductor.ConPilot.png"
         fi
-        flatpak build-bundle \
-          --runtime \
-          ~/.local/share/flatpak/repo \
-          dist/offline/org.freedesktop.Sdk-{{.RUNTIME_VERSION}}.flatpak \
-          org.freedesktop.Sdk \
-          {{.RUNTIME_VERSION}}
+        ln -sf "io.conductor.ConPilot.png" "$APPDIR/.DirIcon"
+
+        # Bundle uv binary
+        UV_TAR="appimage/tools/uv-{{.UV_VERSION}}-x86_64-unknown-linux-gnu.tar.gz"
+        if [[ ! -f "$UV_TAR" ]]; then
+          mkdir -p "appimage/tools"
+          echo "Downloading uv {{.UV_VERSION}} for AppImage…"
+          curl -fsSL -o "$UV_TAR" \
+            "https://github.com/astral-sh/uv/releases/download/{{.UV_VERSION}}/uv-x86_64-unknown-linux-gnu.tar.gz"
+        fi
+        tar -xzf "$UV_TAR" --strip-components=1 -C "$APPDIR/usr/bin" \
+          "uv-x86_64-unknown-linux-gnu/uv"
+        chmod +x "$APPDIR/usr/bin/uv"
+
+        # Wheels
+        cp appimage/deps/*.whl "$APPDIR/usr/share/con-pilot/wheels/"
+
+        echo "AppDir built at $APPDIR"
+
+  appimage:build:
+    desc: "Build the AppImage: deps → AppDir → appimagetool."
+    dir: "{{.CON_PILOT_DIR}}"
+    deps: [appimage:deps]
+    cmds:
+      - task: _appimage-appdir
       - |
-        echo "Downloading uv v{{.UV_VERSION}}…"
-        curl -fsSL -o dist/offline/uv-{{.UV_VERSION}}-x86_64-unknown-linux-gnu.tar.gz \
-          "https://github.com/astral-sh/uv/releases/download/{{.UV_VERSION}}/uv-x86_64-unknown-linux-gnu.tar.gz"
+        set -e
+        mkdir -p appimage/tools dist
+
+        TOOL="appimage/tools/appimagetool-x86_64.AppImage"
+        if [[ ! -f "$TOOL" ]]; then
+          echo "Downloading appimagetool ({{.APPIMAGETOOL_VERSION}})…"
+          curl -fsSL -o "$TOOL" \
+            "https://github.com/AppImage/AppImageKit/releases/download/{{.APPIMAGETOOL_VERSION}}/appimagetool-x86_64.AppImage"
+          chmod +x "$TOOL"
+        fi
+
+        OUTPUT="dist/con-pilot-{{.VERSION}}-x86_64.AppImage"
+        echo "Building AppImage → $OUTPUT"
+        ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" appimage/AppDir "$OUTPUT"
+        chmod +x "$OUTPUT"
+        echo "AppImage written to $OUTPUT"
+
+  appimage:run:
+    desc: "Run the built AppImage (pass extra args via CLI_ARGS)."
+    dir: "{{.CON_PILOT_DIR}}"
+    cmds:
       - |
-        echo ""
-        echo "Offline dependencies exported to dist/offline/:"
-        ls -lh dist/offline/
-    generates:
-      - "{{.CON_PILOT_DIR}}/dist/offline/org.freedesktop.Platform-{{.RUNTIME_VERSION}}.flatpak"
-      - "{{.CON_PILOT_DIR}}/dist/offline/org.freedesktop.Sdk-{{.RUNTIME_VERSION}}.flatpak"
-      - "{{.CON_PILOT_DIR}}/dist/offline/uv-{{.UV_VERSION}}-x86_64-unknown-linux-gnu.tar.gz"
+        OUTPUT="dist/con-pilot-{{.VERSION}}-x86_64.AppImage"
+        if [[ ! -f "$OUTPUT" ]]; then
+          echo "Error: AppImage not found at $OUTPUT — run 'task appimage:build' first."
+          exit 1
+        fi
+        CONDUCTOR_HOME="{{.CONDUCTOR_HOME}}" "$OUTPUT" {{.CLI_ARGS}}
 
-  flatpak:build:
-    desc: Build the Flatpak app image using flatpak-builder.
-    dir: "{{.CON_PILOT_DIR}}"
-    deps: [flatpak:deps]
-    cmds:
-      - mkdir -p flatpak/build-dir flatpak/repo
-      - >-
-        flatpak-builder
-        --force-clean
-        --repo=flatpak/repo
-        flatpak/build-dir
-        flatpak/{{.APP_ID}}.yml
-    sources:
-      - "{{.CON_PILOT_DIR}}/flatpak/{{.APP_ID}}.yml"
-      - "{{.CON_PILOT_DIR}}/flatpak/con-pilot-launcher.sh"
-      - "{{.CON_PILOT_DIR}}/flatpak/deps/*.whl"
-      - "{{.CON_PILOT_DIR}}/src/**/*.py"
-      - "{{.CON_PILOT_DIR}}/pyproject.toml"
-
-  flatpak:bundle:
-    desc: Generate a fresh admin key and export a self-contained .flatpak bundle to dist/.
-    dir: "{{.CON_PILOT_DIR}}"
-    deps: [flatpak:build]
-    cmds:
-      - "{{.PYTHON}} -c \"import uuid; open('key', 'w').write(str(uuid.uuid4()))\""
-      - echo "Generated new admin key at $(pwd)/key"
-      - mkdir -p dist
-      - flatpak build-bundle flatpak/repo dist/io.conductor.ConPilot.flatpak io.conductor.ConPilot
-      - echo "Bundle written to dist/io.conductor.ConPilot.flatpak"
-
-  flatpak:bundle:full:
-    desc: "[DISABLED] Full standalone Flatpak build with offline dependencies - includes runtime bundles."
-    preconditions:
-      - sh: "false"
-        msg: "flatpak:bundle:full is currently disabled."
-    cmds:
-      - task: flatpak:deps
-      - task: flatpak:deps:offline
-      - "{{.PYTHON}} -c \"import uuid; open('key', 'w').write(str(uuid.uuid4()))\""
-      - echo "Generated new admin key at $(pwd)/key"
-      - rm -rf flatpak/build-dir flatpak/repo
-      - mkdir -p flatpak/build-dir flatpak/repo dist
-      - >-
-        flatpak-builder
-        --force-clean
-        --repo=flatpak/repo
-        flatpak/build-dir
-        flatpak/{{.APP_ID}}.yml
-      - flatpak build-bundle flatpak/repo dist/{{.APP_ID}}.flatpak {{.APP_ID}}
-      - echo "Full bundle written to dist/{{.APP_ID}}.flatpak"
-      - echo "Offline deps available in dist/offline/"
-
-  flatpak:run:
-    desc: Run the installed Flatpak (pass extra args via CLI_ARGS).
-    cmds:
-      - flatpak run --env=CONDUCTOR_HOME={{.CONDUCTOR_HOME}} {{.APP_ID}} {{.CLI_ARGS}}
-
-  flatpak:clean:
-    desc: Remove Flatpak build artefacts (keeps downloaded deps cache).
+  appimage:clean:
+    desc: Remove AppImage build artefacts (keeps deps and downloaded tools).
     dir: "{{.CON_PILOT_DIR}}"
     cmds:
-      - rm -rf flatpak/build-dir flatpak/repo dist/{{.APP_ID}}.flatpak
+      - rm -rf appimage/AppDir dist/con-pilot-*-x86_64.AppImage
 
-  flatpak:clean:all:
-    desc: Remove all Flatpak artefacts including the deps wheel cache.
+  appimage:clean:all:
+    desc: Remove all AppImage artefacts including deps and downloaded tools.
     dir: "{{.CON_PILOT_DIR}}"
     cmds:
-      - rm -rf flatpak/build-dir flatpak/repo flatpak/deps dist/io.conductor.ConPilot.flatpak
+      - rm -rf appimage/AppDir appimage/deps appimage/tools dist/con-pilot-*-x86_64.AppImage
 
-  flatpak:
-    desc: "Full Flatpak pipeline: deps → build → bundle."
+  appimage:
+    desc: "Full AppImage pipeline: deps → build."
     cmds:
-      - task: flatpak:deps
-      - task: flatpak:build
-      - task: flatpak:bundle
+      - task: appimage:deps
+      - task: appimage:build
 
-  flatpak:force:
-    desc: "Clean all artefacts and rebuild from scratch: clean → deps → build → bundle."
+  appimage:force:
+    desc: "Clean all artefacts and rebuild from scratch."
     cmds:
-      - task: flatpak:clean:all
-      - task: flatpak:deps
-      - task: flatpak:build
-      - task: flatpak:bundle
+      - task: appimage:clean:all
+      - task: appimage:deps
+      - task: appimage:build
 
   build-all:
     desc: "Build everything. Pass -- --force to rebuild, -- --release to bump version and package setup.sh."
@@ -523,9 +501,9 @@ tasks:
         esac
 
         if [[ "$FORCE" == true ]]; then
-          task flatpak:force
+          task appimage:force
         else
-          task flatpak
+          task appimage
         fi
 
         if [[ "$RELEASE" == true ]]; then
@@ -536,25 +514,27 @@ tasks:
   # ── Release ─────────────────────────────────────────────────────────────────
 
   release:bump:
-    desc: Bump the patch version in VERSION.
+    desc: Bump the patch version of con-pilot (the bundled release version). Syncs pyproject.toml automatically.
     cmds:
       - |
-        V="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
+        V="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
         MAJOR="${V%%.*}"
         REST="${V#*.}"
         MINOR="${REST%%.*}"
         PATCH="${REST#*.}"
         NEW_PATCH=$((PATCH + 1))
         NEW_V="${MAJOR}.${MINOR}.${NEW_PATCH}"
-        printf '%s\n' "$NEW_V" > "{{.ROOT_DIR}}/VERSION"
+        printf '%s\n' "$NEW_V" > "{{.ROOT_DIR}}/src/python/con-pilot/VERSION"
+        sed -i "s/^version = \".*\"/version = \"${NEW_V}\"/" "{{.ROOT_DIR}}/src/python/con-pilot/pyproject.toml"
         echo "Version bumped: ${V} → ${NEW_V}"
+        echo "Updated: src/python/con-pilot/VERSION and src/python/con-pilot/pyproject.toml"
 
   release:package:
     desc: Package minimal deployment into a self-extracting setup.sh.
     cmds:
       - |
         set -e
-        VERSION="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
+        VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
         BUILD_DATE="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
         DIST_DIR="{{.ROOT_DIR}}/dist"
         mkdir -p "$DIST_DIR"
@@ -569,30 +549,32 @@ tasks:
         # Create payload tarball with only essential files
         PAYLOAD="$(mktemp)"
         STAGING="$(mktemp -d)"
-        mkdir -p "$STAGING/conductor/python/con-pilot/dist"
+        mkdir -p "$STAGING/conductor"
 
         cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/VERSION"              "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
-        cp "{{.ROOT_DIR}}/src/scripts/uninstall.sh"         "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/conductor-cli/uninstall-conductor.sh"         "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conductor.yaml"       "$STAGING/conductor/"
-        cp "{{.CON_PILOT_DIR}}/dist/io.conductor.ConPilot.flatpak" "$STAGING/conductor/python/con-pilot/dist/"
+        cp "{{.CON_PILOT_DIR}}/dist/con-pilot-${VERSION}-x86_64.AppImage" "$STAGING/conductor/con-pilot.AppImage"
+        rsync -a --exclude='.not-deployed' "{{.ROOT_DIR}}/.github/" "$STAGING/conductor/.github/"
 
         tar czf "$PAYLOAD" -C "$STAGING" conductor
         rm -rf "$STAGING" "$DEPLOY_README"
 
         # Build setup.sh = header (with inlined shared functions + substitutions) + archive payload
         SETUP="${DIST_DIR}/setup-${VERSION}.sh"
-        CP_VERSION=$(grep -m1 '^version' '{{.CON_PILOT_DIR}}/pyproject.toml' | sed 's/.*"\(.*\)"/\1/')
+        # CP_VERSION is the same as VERSION since the bundled release is pegged to con-pilot
+        CP_VERSION="${VERSION}"
         TMPHEADER="$(mktemp)"
         while IFS= read -r line; do
           if [[ "$line" == "# __FUNCTIONS__" ]]; then
-            cat '{{.ROOT_DIR}}/src/scripts/setup.sh.functions'
+            cat '{{.ROOT_DIR}}/src/conductor-cli/setup.sh.functions'
           else
             printf '%s\n' "$line"
           fi
-        done < '{{.ROOT_DIR}}/src/scripts/setup.sh.header' > "$TMPHEADER"
+        done < '{{.ROOT_DIR}}/src/conductor-cli/setup.sh.header' > "$TMPHEADER"
         sed \
           -e "s|__VERSION__|${VERSION}|g" \
           -e "s|__CON_PILOT_VERSION__|${CP_VERSION}|g" \
@@ -611,7 +593,7 @@ tasks:
     cmds:
       - |
         set -e
-        VERSION="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
+        VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
         BUILD_DATE="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
         DIST_DIR="{{.ROOT_DIR}}/dist"
         mkdir -p "$DIST_DIR"
@@ -630,9 +612,9 @@ tasks:
 
         cp "{{.ROOT_DIR}}/conduct"              "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conduct.bash-completion" "$STAGING/conductor/"
-        cp "{{.ROOT_DIR}}/VERSION"              "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/python/con-pilot/VERSION" "$STAGING/conductor/"
         cp "$DEPLOY_README"                     "$STAGING/conductor/README.md"
-        cp "{{.ROOT_DIR}}/src/scripts/uninstall.sh"         "$STAGING/conductor/"
+        cp "{{.ROOT_DIR}}/src/conductor-cli/uninstall-conductor.sh" "$STAGING/conductor/"
         cp "{{.ROOT_DIR}}/conductor.yaml"       "$STAGING/conductor/"
         cp "{{.CON_PILOT_DIR}}/dist/io.conductor.ConPilot.flatpak" "$STAGING/conductor/python/con-pilot/dist/"
 
@@ -648,11 +630,11 @@ tasks:
         TMPHEADER="$(mktemp)"
         while IFS= read -r line; do
           if [[ "$line" == "# __FUNCTIONS__" ]]; then
-            cat '{{.ROOT_DIR}}/src/scripts/setup.sh.functions'
+            cat '{{.ROOT_DIR}}/src/conductor-cli/setup.sh.functions'
           else
             printf '%s\n' "$line"
           fi
-        done < '{{.ROOT_DIR}}/src/scripts/setup.sh.header.full' > "$TMPHEADER"
+        done < '{{.ROOT_DIR}}/src/conductor-cli/setup.sh.header.full' > "$TMPHEADER"
         sed \
           -e "s|__VERSION__|${VERSION}|g" \
           -e "s|__CON_PILOT_VERSION__|${CP_VERSION}|g" \
@@ -672,11 +654,11 @@ tasks:
   release:
     desc: "Build setup file, create releases/v[version]/ directory, and generate release notes."
     cmds:
-      - task: flatpak:bundle
+      - task: appimage:build
       - task: release:package
       - |
         set -e
-        VERSION="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
+        VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
         RELEASES_DIR="{{.ROOT_DIR}}/releases/v${VERSION}"
         mkdir -p "$RELEASES_DIR"
 
@@ -686,7 +668,7 @@ tasks:
         # Generate release notes from template
         RELEASE_DATE="$(date '+%B %d, %Y')"
         NOTES_FILE="$RELEASES_DIR/release-notes-${VERSION}.md"
-        TEMPLATE="{{.ROOT_DIR}}/src/scripts/release-notes.template.md"
+        TEMPLATE="{{.ROOT_DIR}}/src/conductor-cli/release-notes.template.md"
 
         sed -e "s/__VERSION__/${VERSION}/g" \
             -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \
@@ -699,14 +681,13 @@ tasks:
         echo "NOTE: Edit $NOTES_FILE to add version-specific changes."
 
   release-all:
-    desc: "Build both standard and full-bundle setup files, create releases/v[version]/ directory, and generate release notes."
+    desc: "Build AppImage and setup file, create releases/v[version]/ directory, and generate release notes."
     cmds:
-      - task: flatpak:bundle:full
+      - task: appimage:force
       - task: release:package
-      - task: release:package:deps-bundled
       - |
         set -e
-        VERSION="$(cat '{{.ROOT_DIR}}/VERSION' | tr -d '[:space:]')"
+        VERSION="$(cat '{{.ROOT_DIR}}/src/python/con-pilot/VERSION' | tr -d '[:space:]')"
         RELEASES_DIR="{{.ROOT_DIR}}/releases/v${VERSION}"
         mkdir -p "$RELEASES_DIR"
 
@@ -717,7 +698,7 @@ tasks:
         # Generate release notes from template
         RELEASE_DATE="$(date '+%B %d, %Y')"
         NOTES_FILE="$RELEASES_DIR/release-notes-${VERSION}.md"
-        TEMPLATE="{{.ROOT_DIR}}/src/scripts/release-notes-full.template.md"
+        TEMPLATE="{{.ROOT_DIR}}/src/conductor-cli/release-notes-full.template.md"
 
         sed -e "s/__VERSION__/${VERSION}/g" \
             -e "s/__RELEASE_DATE__/${RELEASE_DATE}/g" \

@@ -1,13 +1,3 @@
-# ── Preflight checks ──────────────────────────────────────────────────────────
-
-require_flatpak() {
-  if ! command -v flatpak >/dev/null 2>&1; then
-    echo "Error: Flatpak is not installed." >&2
-    echo "Install it first:  https://flatpak.org/setup/" >&2
-    exit 1
-  fi
-}
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 archive_line() {
@@ -41,17 +31,24 @@ stop_existing() {
 start_and_healthcheck() {
   local host="${CON_PILOT_HOST:-localhost}"
   local port="${CON_PILOT_PORT:-8000}"
+  local appimage="${CONDUCTOR_HOME}/con-pilot.AppImage"
 
   stop_existing
 
-  flatpak run "$APP_ID" serve &
+  if [[ ! -x "$appimage" ]]; then
+    echo "Error: AppImage not found or not executable at ${appimage}" >&2
+    exit 1
+  fi
+
+  local log="${CONDUCTOR_HOME}/con-pilot.log"
+  setsid "$appimage" serve >> "$log" 2>&1 &
   local pid=$!
   local url="http://${host}:${port}/health"
   echo "Waiting for ${url}…"
 
   for i in $(seq 1 15); do
     if curl -sf "$url" >/dev/null 2>&1; then
-      echo "Health check passed — con-pilot is running (PID ${pid})."
+      echo "Health check passed — con-pilot is running (PID ${pid}). Logs: ${log}"
       return 0
     fi
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -67,11 +64,8 @@ start_and_healthcheck() {
 }
 
 show_key() {
-  local flatpak_data="$HOME/.var/app/${APP_ID}/data"
-  local key_file="${flatpak_data}/key"
+  local key_file="${CONDUCTOR_HOME}/key"
 
-  # Generate a new key at deployment time
-  mkdir -p "$flatpak_data"
   local new_key
   new_key="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
   echo "$new_key" > "$key_file"
@@ -80,5 +74,5 @@ show_key() {
   echo ""
   echo "ADMIN KEY (save this NOW — it will NOT be shown again): $new_key"
   echo ""
-  echo "Key stored in Flatpak sandbox at ${key_file}"
+  echo "Key stored at ${key_file}"
 }

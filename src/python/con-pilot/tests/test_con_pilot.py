@@ -57,12 +57,14 @@ _CONFIG_MODEL = ConductorConfig(**_CONFIG)
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolated CONDUCTOR_HOME with a minimal directory layout."""
     (tmp_path / "conductor.json").write_text(json.dumps(_CONFIG, indent=2))
-    agents = tmp_path / ".github" / "agents"
-    agents.mkdir(parents=True)
-    (agents / "conductor.agent.md").write_text(
+    (tmp_path / ".github" / "agents").mkdir(parents=True)
+    system_agents = tmp_path / ".github" / "system" / "agents"
+    system_agents.mkdir(parents=True)
+    (system_agents / "conductor.agent.md").write_text(
         '---\nname: "uppity"\nmodel: "test-model"\n---\n'
     )
-    (agents / "retired").mkdir()
+    (system_agents / "retired").mkdir()
+    (system_agents / "logs").mkdir()
     (tmp_path / ".github" / "trust.json").write_text(
         json.dumps({"conductor": str(tmp_path)}, indent=2)
     )
@@ -248,30 +250,30 @@ class TestSync:
     def test_creates_system_agent(self, pilot: ConPilot, home: Path) -> None:
         with patch.object(pilot, "resolve_project", return_value=None):
             pilot.sync()
-        assert (home / ".github" / "agents" / "support.agent.md").exists()
+        assert (home / ".github" / "system" / "agents" / "support.agent.md").exists()
 
     def test_does_not_overwrite_conductor(self, pilot: ConPilot, home: Path) -> None:
-        conductor_file = home / ".github" / "agents" / "conductor.agent.md"
+        conductor_file = home / ".github" / "system" / "agents" / "conductor.agent.md"
         original = conductor_file.read_text()
         with patch.object(pilot, "resolve_project", return_value=None):
             pilot.sync()
         assert conductor_file.read_text() == original
 
     def test_retires_unknown_system_agent(self, pilot: ConPilot, home: Path) -> None:
-        ghost = home / ".github" / "agents" / "ghost.agent.md"
+        ghost = home / ".github" / "system" / "agents" / "ghost.agent.md"
         ghost.write_text("---\nname: ghost\n---\n")
         with patch.object(pilot, "resolve_project", return_value=None):
             pilot.sync()
         assert not ghost.exists()
-        assert (home / ".github" / "agents" / "retired" / "ghost.agent.md").exists()
+        assert (home / ".github" / "system" / "agents" / "retired" / "ghost.agent.md").exists()
 
     def test_restores_retired_system_agent(self, pilot: ConPilot, home: Path) -> None:
-        (home / ".github" / "agents" / "retired" / "support.agent.md").write_text(
+        (home / ".github" / "system" / "agents" / "retired" / "support.agent.md").write_text(
             '---\nname: "dogsbody"\nmodel: "test-model"\n---\n'
         )
         with patch.object(pilot, "resolve_project", return_value=None):
             pilot.sync()
-        assert (home / ".github" / "agents" / "support.agent.md").exists()
+        assert (home / ".github" / "system" / "agents" / "support.agent.md").exists()
 
     def test_creates_project_agents(
         self, pilot: ConPilot, home: Path, monkeypatch: pytest.MonkeyPatch
@@ -537,7 +539,7 @@ class TestAmendAgent:
     def test_system_agent_requires_key(
         self, pilot: ConPilot, home: Path, tmp_path: Path
     ) -> None:
-        (home / ".github" / "agents" / "support.agent.md").write_text(
+        (home / ".github" / "system" / "agents" / "support.agent.md").write_text(
             '---\nname: "dogsbody"\nmodel: "test-model"\n---\n\n## Role\nSupport.'
         )
         instr = tmp_path / "i.md"
@@ -548,13 +550,13 @@ class TestAmendAgent:
     def test_system_agent_with_correct_key(
         self, pilot: ConPilot, home: Path, tmp_path: Path
     ) -> None:
-        (home / ".github" / "agents" / "support.agent.md").write_text(
+        (home / ".github" / "system" / "agents" / "support.agent.md").write_text(
             '---\nname: "dogsbody"\nmodel: "test-model"\n---\n\n## Role\nSupport.'
         )
         instr = tmp_path / "i.md"
         instr.write_text("- Be helpful.")
         pilot.amend_agent(str(instr), "support", key=pilot._load_or_generate_key())
-        content = (home / ".github" / "agents" / "support.agent.md").read_text()
+        content = (home / ".github" / "system" / "agents" / "support.agent.md").read_text()
         assert "## Instructions" in content
         assert "- Be helpful." in content
 
@@ -598,7 +600,7 @@ class TestReplaceAgent:
     def test_system_agent_requires_key(
         self, pilot: ConPilot, home: Path, tmp_path: Path
     ) -> None:
-        (home / ".github" / "agents" / "support.agent.md").write_text(
+        (home / ".github" / "system" / "agents" / "support.agent.md").write_text(
             '---\nname: "dogsbody"\nmodel: "test-model"\n---\n\n## Role\nSupport.'
         )
         instr = tmp_path / "i.md"
@@ -681,7 +683,7 @@ class TestResetAgent:
             pilot.reset_agent("conductor")
 
     def test_system_agent_requires_key(self, pilot: ConPilot, home: Path) -> None:
-        (home / ".github" / "agents" / "support.agent.md").write_text(
+        (home / ".github" / "system" / "agents" / "support.agent.md").write_text(
             '---\nname: "dogsbody"\nmodel: "test-model"\n---\n\n## Role\nSupport.'
         )
         with pytest.raises(ValueError, match="system key"):

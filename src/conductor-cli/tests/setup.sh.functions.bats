@@ -13,32 +13,15 @@ setup() {
   # Scratch dir per test
   TEST_DIR="$(mktemp -d)"
   BASHRC="$TEST_DIR/.bashrc"
-  APP_ID="io.test.App"
+  CONDUCTOR_HOME="$TEST_DIR"
   HOME="$TEST_DIR"
-  export BASHRC APP_ID HOME
+  export BASHRC CONDUCTOR_HOME HOME
 }
 
 teardown() {
   rm -rf "$TEST_DIR"
 }
 
-# ── require_flatpak ───────────────────────────────────────────────────────────
-
-@test "require_flatpak: passes when flatpak is on PATH" {
-  flatpak() { return 0; }
-  export -f flatpak
-  run require_flatpak
-  [ "$status" -eq 0 ]
-}
-
-@test "require_flatpak: exits 1 with error when flatpak missing" {
-  local empty_bin="$TEST_DIR/empty_bin"
-  mkdir -p "$empty_bin"
-  # Run in a subprocess so the stripped PATH doesn't affect teardown
-  run bash -c "source '$FUNCTIONS_FILE'; PATH='$empty_bin'; require_flatpak"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"Flatpak is not installed"* ]]
-}
 
 # ── archive_line ──────────────────────────────────────────────────────────────
 
@@ -129,7 +112,7 @@ teardown() {
   run show_key
   [ "$status" -eq 0 ]
 
-  local key_file="$TEST_DIR/.var/app/${APP_ID}/data/key"
+  local key_file="$TEST_DIR/key"
   [ -f "$key_file" ]
   [ "$(cat "$key_file")" = "test-uuid-1234" ]
 }
@@ -139,7 +122,7 @@ teardown() {
   export -f uuidgen
 
   show_key >/dev/null 2>&1
-  local key_file="$TEST_DIR/.var/app/${APP_ID}/data/key"
+  local key_file="$TEST_DIR/key"
   local perms
   perms="$(stat -c '%a' "$key_file")"
   [ "$perms" = "600" ]
@@ -161,7 +144,7 @@ teardown() {
   # Run in subprocess with empty PATH to hide uuidgen; /proc/sys/kernel/random/uuid is always readable
   run bash -c "
     source '$FUNCTIONS_FILE'
-    APP_ID='$APP_ID'
+    CONDUCTOR_HOME='$TEST_DIR'
     HOME='$TEST_DIR'
     PATH='$empty_bin'
     show_key

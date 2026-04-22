@@ -5,20 +5,20 @@ Provides in-memory caching and persistent storage of conductor configuration
 versions in CONDUCTOR_HOME/.scores/.
 """
 
+from __future__ import annotations
+
 import difflib
 import json
 import logging
 import os
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 import yaml
 from pydantic import BaseModel, Field
 
 from con_pilot.core.models.config import ConductorConfig
 
-if TYPE_CHECKING:
-    from con_pilot.paths import PathResolver
+from con_pilot.paths import PathResolver
 
 log = logging.getLogger(__name__)
 

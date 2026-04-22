@@ -21,16 +21,26 @@ Usage
 
 import argparse
 import logging
+import os
 import sys
 
 
 def _setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[con-pilot %(asctime)s] %(levelname)s %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stdout,
+    log_file = os.path.join(
+        os.environ.get("CONDUCTOR_HOME", os.path.expanduser("~/.conductor")),
+        "con-pilot.log",
     )
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    handler = logging.FileHandler(log_file)
+    handler.setFormatter(
+        logging.Formatter(
+            "[con-pilot %(asctime)s] %(levelname)s %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    )
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
 
 
 def main() -> None:
