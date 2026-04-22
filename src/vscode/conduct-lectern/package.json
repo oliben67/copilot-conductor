@@ -15,7 +15,7 @@
   "categories": [
     "Other"
   ],
-  "icon": "icons/icon.png",
+  "icon": "icons/dark/icon.png",
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -38,13 +38,19 @@
         "command": "conductor.openHome",
         "title": "Open Conductor Home",
         "category": "Conductor",
-        "icon": "$(home)"
+        "icon": {
+          "light": "icons/light/icon.svg",
+          "dark": "icons/dark/icon.svg"
+        }
       },
       {
         "command": "conductor.selectHome",
         "title": "Select Conductor Home Directory",
         "category": "Conductor",
-        "icon": "$(folder-opened)"
+        "icon": {
+          "light": "icons/light/icon.svg",
+          "dark": "icons/dark/icon.svg"
+        }
       }
     ],
     "menus": {
