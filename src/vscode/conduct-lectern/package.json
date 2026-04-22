@@ -1,20 +1,24 @@
 {
-  "name": "conductor-home",
-  "displayName": "Conductor Home",
+  "name": "conduct-lectern",
+  "displayName": "Conduct Lectern",
   "description": "Configure and manage the Conductor home directory",
   "version": "0.1.0",
   "publisher": "oliben67",
   "repository": {
     "type": "git",
     "url": "https://github.com/oliben67/copilot-conductor.git",
-    "directory": "src/vscode/conductor-home"
+    "directory": "src/vscode/conduct-lectern"
   },
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "icon": "icons/icon.png",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
@@ -67,8 +71,9 @@
     "test:ci": "npm run compile:check && npm run lint && npm run test:unit",
     "build": "rimraf dist && npm run compile",
     "clean": "rimraf dist",
-    "package": "npm run build && vsce package --out $(git rev-parse --show-toplevel)/releases/v$(node -p \"require('./package.json').version\")/",
-    "deploy": "code --install-extension $(git rev-parse --show-toplevel)/releases/v$(node -p \"require('./package.json').version\")/conductor-home-$(node -p \"require('./package.json').version\").vsix"
+    "version:sync": "node -e \"const fs=require('fs'),p=require('./package.json');p.version=fs.readFileSync('./VERSION','utf8').trim();fs.writeFileSync('./package.json',JSON.stringify(p,null,2)+'\\n');console.log('version set to '+p.version)\"",
+    "package": "npm run version:sync && npm run build && vsce package --out $(git rev-parse --show-toplevel)/releases/v$(cat VERSION | tr -d '[:space:]')/",
+    "deploy": "code --install-extension $(git rev-parse --show-toplevel)/releases/v$(cat VERSION | tr -d '[:space:]')/conduct-lectern-$(cat VERSION | tr -d '[:space:]').vsix"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

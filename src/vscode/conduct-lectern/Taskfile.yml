@@ -6,8 +6,8 @@ vars:
     sh: git -C "{{.ROOT_DIR}}" rev-parse --show-toplevel
   RELEASES_DIR: "{{.WORKSPACE_ROOT}}/releases"
   VERSION:
-    sh: node -p "require('{{.EXT_DIR}}/package.json').version"
-  VSIX_NAME: "conductor-home-{{.VERSION}}.vsix"
+    sh: cat "{{.EXT_DIR}}/VERSION" | tr -d '[:space:]'
+  VSIX_NAME: "conduct-lectern-{{.VERSION}}.vsix"
   VERSIONED_DIR: "{{.RELEASES_DIR}}/v{{.VERSION}}"
   VSIX_PATH: "{{.VERSIONED_DIR}}/{{.VSIX_NAME}}"
 
@@ -106,9 +106,23 @@ tasks:
 
   # ── Package ─────────────────────────────────────────────────────────────────
 
+  version:sync:
+    desc: Sync the VERSION file into package.json so vsce picks up the right version.
+    cmds:
+      - |
+        set -e
+        VERSION="$(cat '{{.EXT_DIR}}/VERSION' | tr -d '[:space:]')"
+        node -e "
+          const fs = require('fs');
+          const p = require('{{.EXT_DIR}}/package.json');
+          p.version = process.argv[1];
+          fs.writeFileSync('{{.EXT_DIR}}/package.json', JSON.stringify(p, null, 2) + '\n');
+          console.log('package.json version set to ' + process.argv[1]);
+        " "$VERSION"
+
   package:
     desc: Build and package the extension as a .vsix into releases/vX.Y.Z/.
-    deps: [submodule:init]
+    deps: [submodule:init, version:sync]
     cmds:
       - mkdir -p {{.VERSIONED_DIR}}
       - task: build
@@ -151,7 +165,7 @@ tasks:
         cp "$ROOT_README" README.md
 
         git add -A
-        git commit -m "Release conductor-home {{.VERSION}}" || echo "Nothing new to commit"
+        git commit -m "Release conduct-lectern {{.VERSION}}" || echo "Nothing new to commit"
         git push origin main
 
         # Restore the symlink locally
@@ -161,7 +175,7 @@ tasks:
         # Update the submodule pointer in the parent repo
         git -C "{{.WORKSPACE_ROOT}}" add releases
         git -C "{{.WORKSPACE_ROOT}}" diff --cached --quiet releases || \
-          git -C "{{.WORKSPACE_ROOT}}" commit -m "chore: update conductor-home releases submodule to {{.VERSION}}"
+          git -C "{{.WORKSPACE_ROOT}}" commit -m "chore: update conduct-lectern releases submodule to {{.VERSION}}"
 
   # ── Submodule Management ─────────────────────────────────────────────────────
 

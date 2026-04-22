@@ -16,7 +16,7 @@ function updateStatusBar(item: vscode.StatusBarItem): void {
   const resolved = resolveConductorHome();
   item.text = `$(home) Conductor: ${resolved}`;
   item.tooltip = new vscode.MarkdownString(
-    `**Conductor Home**\n\n\`${resolved}\`\n\nClick to open`,
+    `**Conduct Lectern**\n\n\`${resolved}\`\n\nClick to open`,
     true,
   );
   item.command = 'conductor.openHome';
@@ -52,7 +52,7 @@ async function selectConductorHome(): Promise<void> {
     canSelectFolders: true,
     canSelectMany: false,
     title: 'Select Conductor Home Directory',
-    openLabel: 'Select as Conductor Home',
+    openLabel: 'Set as Conductor Home',
   };
   if (fs.existsSync(current)) {
     openDialogOptions.defaultUri = vscode.Uri.file(current);
