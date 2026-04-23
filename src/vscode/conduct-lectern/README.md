@@ -2,6 +2,12 @@
 
 > A VS Code extension for configuring and managing the [Conductor](https://github.com/oliben67/copilot-conductor) home directory.
 
+<picture>
+	<source media="(prefers-color-scheme: dark)" srcset="./icons/dark/icon.png" />
+	<source media="(prefers-color-scheme: light)" srcset="./icons/light/icon.png" />
+	<img alt="Conduct Lectern icon" src="./icons/light/icon.png" width="128" />
+</picture>
+
 Conductor is a multi-agent orchestration framework for GitHub Copilot. **Conduct Lectern** provides a dedicated activity bar panel to browse, configure, and open your Conductor home directory directly from VS Code.
 
 ---
@@ -44,3 +50,15 @@ A configured [Conductor](https://github.com/oliben67/copilot-conductor) installa
 2. Open the **Conductor** panel in the activity bar.
 3. If no home directory is configured, click **Select Home Directory** and pick your `~/.conductor` folder.
 4. The view will populate with your Conductor home contents.
+
+---
+
+## Development
+
+To refresh bundled extension icon assets from `src/artefacts/img`, run:
+
+```sh
+npm run icons:sync
+```
+
+This command updates activity bar, command, and marketplace icon files used by packaging.

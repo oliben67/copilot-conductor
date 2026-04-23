@@ -15,5 +15,4 @@ tests/**
 **/*.ts
 !dist/**
 node_modules/**
-icons/icon.svg
-icons/light/icon.png
+!icons/**

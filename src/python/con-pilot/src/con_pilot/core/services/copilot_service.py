@@ -20,19 +20,30 @@ from pydantic import BaseModel, Field
 if TYPE_CHECKING:
     from con_pilot.conductor import ConPilot
 
-# try:
-from copilot import CopilotClient, SubprocessConfig, define_tool
-from copilot.generated.session_events import (
-    AssistantMessageData,
-    PermissionRequest,
-    SessionIdleData,
-)
-from copilot.session import PermissionHandler, PermissionRequestResult
+try:
+    from copilot import CopilotClient, SubprocessConfig, define_tool
+    from copilot.generated.session_events import (
+        PermissionRequest,
+        SessionEventType,
+    )
+    from copilot.session import PermissionHandler, PermissionRequestResult
+
+    HAS_COPILOT_SDK = True
+    COPILOT_SDK_IMPORT_ERROR: str | None = None
+except Exception as exc:  # pragma: no cover - depends on local SDK/runtime mismatch.
+    CopilotClient = Any  # type: ignore[assignment]
+    SubprocessConfig = Any  # type: ignore[assignment]
+    define_tool = None  # type: ignore[assignment]
+    PermissionRequest = object  # type: ignore[assignment]
+    SessionEventType = object  # type: ignore[assignment]
+    PermissionHandler = None  # type: ignore[assignment]
+    PermissionRequestResult = None  # type: ignore[assignment]
+
+    HAS_COPILOT_SDK = False
+    COPILOT_SDK_IMPORT_ERROR = f"{exc.__class__.__name__}: {exc}"
 
 from con_pilot.core.models import Agent, AgentConfig, AgentPermissions
 from con_pilot.logger import app_logger
-
-HAS_COPILOT_SDK = True
 
 log = app_logger.bind(module=__name__, component="CopilotAgentService")
 
@@ -111,7 +122,10 @@ class CopilotAgentService:
             RuntimeError: If the Copilot SDK is not available.
         """
         if not HAS_COPILOT_SDK:
-            log.warning("Copilot SDK not available. Agent management via SDK disabled.")
+            log.warning(
+                "Copilot SDK not available. Agent management via SDK disabled. (%s)",
+                COPILOT_SDK_IMPORT_ERROR,
+            )
             return
 
         log.info("Starting Copilot agent service...")
@@ -202,14 +216,31 @@ class CopilotAgentService:
 
         model = conductor_cfg.model or self._pilot.default_model
 
-        self._conductor_session = await self._client.create_session(
-            model=model,
-            session_id=f"conductor-{conductor_cfg.name}",
-            system_message={"content": system_message},
-            tools=tools,
-            on_permission_request=permission_handler,
-            streaming=True,
-        )
+        try:
+            self._conductor_session = await self._client.create_session(
+                model=model,
+                session_id=f"conductor-{conductor_cfg.name}",
+                system_message={"content": system_message},
+                tools=tools,
+                on_permission_request=permission_handler,
+                streaming=True,
+            )
+        except Exception as exc:
+            err = str(exc)
+            if "is not available" not in err:
+                raise
+            log.warning(
+                "Configured model '%s' is unavailable; retrying with SDK default model",
+                model,
+            )
+            self._conductor_session = await self._client.create_session(
+                model=None,
+                session_id=f"conductor-{conductor_cfg.name}",
+                system_message={"content": system_message},
+                tools=tools,
+                on_permission_request=permission_handler,
+                streaming=True,
+            )
         log.debug("Conductor session created", session_id=f"conductor-{conductor_cfg.name}")
 
         log.info(
@@ -257,7 +288,7 @@ class CopilotAgentService:
 ## Environment
 - CONDUCTOR_HOME: {self._pilot.home}
 - Default Model: {self._pilot.default_model}
-- Trusted Directories: {", ".join(self._pilot.trusted_directories)}
+- Trusted Directories: {", ".join(self._trusted_directories())}
 
 ## System Agents Available
 {agents_yaml}
@@ -481,7 +512,7 @@ Your allowed operations:
                 # Check trusted directories
                 if permissions.trusted_directories_only:
                     file_path = getattr(request, "file_name", "") or ""
-                    trusted = self._pilot.trusted_directories
+                    trusted = self._trusted_directories()
                     if not any(file_path.startswith(t) for t in trusted):
                         return PermissionRequestResult(kind="denied-by-rules")
 
@@ -540,7 +571,7 @@ for task delegation.
         done = asyncio.Event()
 
         def on_event(event):
-            if hasattr(event, "data") and isinstance(event.data, SessionIdleData):
+            if self._event_type_value(event) == "session.idle":
                 done.set()
 
         self._conductor_session.on(on_event)
@@ -568,11 +599,13 @@ for task delegation.
         done = asyncio.Event()
 
         def on_event(event):
-            if hasattr(event, "data"):
-                if isinstance(event.data, AssistantMessageData):
-                    response_parts.append(event.data.content)
-                elif isinstance(event.data, SessionIdleData):
-                    done.set()
+            event_type = self._event_type_value(event)
+            if event_type == "assistant.message":
+                text = self._assistant_text(event)
+                if text:
+                    response_parts.append(text)
+            elif event_type == "session.idle":
+                done.set()
 
         self._conductor_session.on(on_event)
         await self._conductor_session.send(message)
@@ -608,3 +641,35 @@ for task delegation.
             if isinstance(agent_cfg, Agent):
                 name = agent_cfg.name or role
                 agent_cfg.running = self._is_agent_running(name)
+
+    @staticmethod
+    def _event_type_value(event: Any) -> str:
+        """Return normalized event type string across SDK variants."""
+        raw = getattr(event, "type", None)
+        if raw is None:
+            return ""
+        value = getattr(raw, "value", raw)
+        return str(value)
+
+    @staticmethod
+    def _assistant_text(event: Any) -> str:
+        """Extract assistant message content from SDK event payload variants."""
+        data = getattr(event, "data", None)
+        if data is None:
+            return ""
+
+        content = getattr(data, "content", None)
+        if isinstance(content, str):
+            return content
+
+        if isinstance(data, dict):
+            raw = data.get("content")
+            if isinstance(raw, str):
+                return raw
+
+        return ""
+
+    def _trusted_directories(self) -> list[str]:
+        """Return trusted directories derived from the ConPilot environment."""
+        raw = self._pilot.env.get("TRUSTED_DIRECTORIES", "")
+        return [p for p in raw.split(":") if p]

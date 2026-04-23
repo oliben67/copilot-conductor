@@ -15,7 +15,7 @@
   "categories": [
     "Other"
   ],
-  "icon": "icons/dark/icon.png",
+  "icon": "icons/icon.png",
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -26,7 +26,7 @@
         {
           "id": "conductor",
           "title": "Conductor",
-          "icon": "icons/dark/icon.svg"
+          "icon": "icons/icon.svg"
         }
       ]
     },
@@ -35,7 +35,7 @@
         {
           "id": "conductor.homeView",
           "name": "Home",
-          "icon": "icons/dark/icon.svg"
+          "icon": "icons/icon.svg"
         }
       ]
     },
@@ -113,6 +113,7 @@
     }
   },
   "scripts": {
+    "icons:sync": "node ./scripts/sync-icons.mjs",
     "compile": "tsc -p tsconfig.json",
     "compile:check": "tsc -p tsconfig.json --noEmit",
     "watch": "tsc -p tsconfig.json --watch",
@@ -126,7 +127,7 @@
     "build": "rimraf dist && npm run compile",
     "clean": "rimraf dist",
     "version:sync": "node -e \"const fs=require('fs'),p=require('./package.json');p.version=fs.readFileSync('./VERSION','utf8').trim();fs.writeFileSync('./package.json',JSON.stringify(p,null,2)+'\\n');console.log('version set to '+p.version)\"",
-    "package": "npm run version:sync && npm run build && vsce package --out $(git rev-parse --show-toplevel)/releases/v$(cat $(git rev-parse --show-toplevel)/src/python/con-pilot/VERSION | tr -d '[:space:]')/",
+    "package": "npm run icons:sync && npm run version:sync && npm run build && vsce package --out $(git rev-parse --show-toplevel)/releases/v$(cat $(git rev-parse --show-toplevel)/src/python/con-pilot/VERSION | tr -d '[:space:]')/",
     "deploy": "code --install-extension $(git rev-parse --show-toplevel)/releases/v$(cat $(git rev-parse --show-toplevel)/src/python/con-pilot/VERSION | tr -d '[:space:]')/conduct-lectern-$(cat VERSION | tr -d '[:space:]').vsix"
   },
   "devDependencies": {

@@ -1,26 +1,23 @@
 # con-pilot
 
-> The synchronisation engine, CLI, and HTTP API for the [Conductor](../../README.md) AI agent system.
+The Python service and CLI for Conductor agent orchestration.
 
-`con-pilot` is a Python 3.14 package that keeps your VS Code Copilot agent roster in sync with `conductor.yaml`, dispatches scheduled cron tasks, and exposes every lifecycle operation as both a CLI and a FastAPI service.
+`con-pilot` is responsible for:
+- synchronizing agent files from configuration,
+- dispatching cron tasks,
+- serving the FastAPI API used by the outer `conduct` tooling,
+- starting Copilot SDK-backed conductor runtime at service startup.
 
-**Deployed as an AppImage** with uv-based bootstrap — the first run installs a portable Python environment and all dependencies in under 100 ms.
+## What is current
 
----
+- Configuration source: `conductor.json` (not `conductor.yaml`)
+- Python requirement: `>=3.11`
+- Copilot integration package: `github-copilot-sdk`
+- API prefix default: `/api/v1` (configurable via `CON_PILOT_API_BASE` and `CON_PILOT_API_VERSION`)
 
 ## Installation
 
-### Via setup.sh (recommended)
-
-`con-pilot` is installed automatically by the Conductor `setup.sh` installer:
-
-```bash
-./setup-0.3.0.sh install ~/.conductor
-```
-
-This installs the con-pilot AppImage, which bootstraps Python + all dependencies on first run.
-
-### From source (development)
+### Development
 
 ```bash
 cd src/python/con-pilot
@@ -28,295 +25,137 @@ uv sync --all-groups
 source .venv/bin/activate
 ```
 
-The `con-pilot` entry point is then available at `.venv/bin/con-pilot`.
-
----
-
-## Quick start
+CLI entrypoint:
 
 ```bash
-# Bootstrap your session
-eval $(con-pilot setup-env --shell)
-
-# One-shot sync
-con-pilot sync
-
-# Run the background watcher (con-pilot serve is also started by setup-env)
-con-pilot serve
+con-pilot --help
 ```
 
----
+## CLI commands
 
-## Commands
+From [src/python/con-pilot/src/con_pilot/main.py](src/python/con-pilot/src/con_pilot/main.py):
 
-```mermaid
-mindmap
-  root((con-pilot))
-    Sync
-      sync
-      cron
-      serve
-    Session
-      setup-env
-    Projects
-      register
-      retire-project
-    Agent editing
-      replace
-      reset
-```
+- `con-pilot sync`
+- `con-pilot cron`
+- `con-pilot serve [-i|--interval SECONDS]`
+- `con-pilot setup-env [--shell]`
+- `con-pilot register NAME DIR`
+- `con-pilot retire-project NAME`
+- `con-pilot list-agents [-p|--project PROJECT] [--json]`
+- `con-pilot validate [FILE] [--json]`
+- `con-pilot replace FILE ROLE [PROJECT] [--key KEY]`
+- `con-pilot reset ROLE [PROJECT] [--key KEY]`
 
-| Command | Description |
-|---------|-------------|
-| [`sync`](#sync) | Reconcile `.agent.md` files with `conductor.yaml` |
-| [`cron`](#cron) | Dispatch due cron jobs to `pending.log` |
-| [`serve`](#serve) | Run the FastAPI sync service |
-| [`setup-env`](#setup-env) | Print session env vars and start the watcher |
-| [`register`](#register) | Register a new project |
-| [`retire-project`](#retire-project) | Archive a project |
-| [`replace`](#replace) | Replace the full body of agent file(s) |
-| [`reset`](#reset) | Reset agent file(s) to template/default |
+Notes:
+- `amend` is currently disabled in code.
+- `setup-env` prints environment values; the CLI path does not start a background server process.
 
----
+## API endpoints
 
-### sync
+All routes are mounted under `/api/v1` by default.
 
-```
-con-pilot sync
-```
+### Health / runtime
 
-Reads `conductor.yaml`, creates missing agent files, retires removed ones, and dispatches cron jobs. Idempotent — safe to run any number of times.
+- `GET /api/v1/health`
+- `GET /api/v1/version`
+- `GET /api/v1/startup-proof`
 
-```mermaid
-flowchart LR
-    CF(["conductor.yaml"])
+`/startup-proof` returns runtime evidence for Copilot startup state:
+- SDK package version visibility
+- service wiring status
+- whether Copilot client is started
+- whether conductor session is started
+- startup error message, if any
 
-    CF --> SA["system agents\n.github/agents/"]
-    CF --> PA["project agents\n.github/projects/{name}/agents/"]
+### Auth / admin
 
-    SA --> C1["create missing"]
-    SA --> C2["restore from retired/"]
-    SA --> C3["retire unknown"]
+- `POST /api/v1/login`
+- `POST /api/v1/verify-key`
+- `POST /api/v1/create-user`
+- `GET /api/v1/show-me` (dev-only, gated by `CON_PILOT_DEV_SHOW_ME`)
 
-    PA --> D1["create missing\n(numbered instances)"]
-    PA --> D2["restore from retired/"]
-    PA --> D3["retire unknown"]
+### Agents
 
-    CF --> CR["dispatch cron"]
-```
+- `GET /api/v1/agents`
+- `GET /api/v1/agents/{name}`
+- `GET /api/v1/agents/config`
+- `GET /api/v1/agents/config/{name}`
+- `PATCH /api/v1/agents/config/{name}` (requires `X-Admin-Key`)
 
----
+### Sync / validation
 
-### cron
+- `POST /api/v1/sync`
+- `POST /api/v1/cron`
+- `GET /api/v1/validate`
+- `POST /api/v1/validate`
 
-```
-con-pilot cron
-```
+### Project operations
 
-Checks all agents with `has_cron_jobs: true` and appends any due tasks to `pending.log`. Called automatically at the end of every `sync` cycle.
+- `GET /api/v1/setup-env`
+- `POST /api/v1/register`
+- `POST /api/v1/retire-project`
+- `POST /api/v1/replace`
+- `POST /api/v1/reset`
 
----
+### Config versioning (`/api/v1/config`)
 
-### serve
+- `GET /api/v1/config`
+- `POST /api/v1/config`
+- `GET /api/v1/config/{version}`
+- `POST /api/v1/config/diff`
+- `GET /api/v1/config/{version}/diff-with-active`
+- `POST /api/v1/config/{version}/activate` (requires `X-Admin-Key`)
+- `PUT /api/v1/config/{version}` (requires `X-Admin-Key`)
+- `POST /api/v1/config/{version}/restore` (requires `X-Admin-Key`)
+- `DELETE /api/v1/config/{version}` (requires `X-Admin-Key`)
 
-```
-con-pilot serve [-i SECONDS]
-```
+### Snapshot management (`/api/v1/snapshot`)
 
-Starts a FastAPI service with a background sync loop. Default interval: 900 s (15 min).
+- `GET /api/v1/snapshot`
+- `POST /api/v1/snapshot`
+- `GET /api/v1/snapshot/changes`
+- `POST /api/v1/snapshot/check-and-create`
+- `GET /api/v1/snapshot/watcher`
+- `POST /api/v1/snapshot/watcher/start`
+- `POST /api/v1/snapshot/watcher/stop`
+- `GET /api/v1/snapshot/{filename}`
+- `GET /api/v1/snapshot/{filename}/download`
+- `DELETE /api/v1/snapshot/{filename}`
 
-```mermaid
-flowchart TD
-    SV(["con-pilot serve"])
-    SV -->|"every 900 s"| S["sync()"]
-    SV --> H["GET /health"]
-    SV --> VER["GET /version"]
-    SV --> SE["GET /setup-env"]
-    SV --> AG["GET /agents"]
-    SV --> MS["POST /sync"]
-    SV --> MC["POST /cron"]
-    SV --> VAL["GET|POST /validate"]
-    SV --> REG["POST /register"]
-    SV --> RET["POST /retire-project"]
-    SV --> REP["POST /replace"]
-    SV --> RST["POST /reset"]
-    SV --> CFG["GET|POST /config/*"]
-    SV --> SNP["GET|POST /snapshot/*"]
-    MS -->|manual trigger| S
-    MC -->|manual trigger| C["cron()"]
-```
+## Security model
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | `{"status": "ok"}` |
-| `/version` | GET | Service version string |
-| `/setup-env` | GET | Resolve project context and return session env vars |
-| `/agents` | GET | List all agents (`?project=` to filter) |
-| `/sync` | POST | Trigger a manual sync cycle |
-| `/cron` | POST | Trigger a manual cron dispatch |
-| `/validate` | GET, POST | Validate `conductor.yaml` against the schema |
-| `/register` | POST | Register a new project (`name`, `directory`) |
-| `/retire-project` | POST | Retire a project (`name`) |
-| `/replace` | POST | Replace agent body (`file_content`, `role`, `project`, `key`) |
-| `/reset` | POST | Reset agent to defaults (`role`, `project`, `key`) |
-| `/config` | GET | List stored configuration versions |
-| `/config` | POST | Save a new configuration version |
-| `/config/{version}` | GET | Retrieve a specific configuration version |
-| `/config/diff` | POST | Unified diff between two stored versions |
-| `/config/{version}/diff-with-active` | GET | Diff a stored version against the active config |
-| `/config/{version}/activate` | POST | Activate a stored version (requires `X-Admin-Key`) |
-| `/config/{version}` | DELETE | Delete a stored version (requires `X-Admin-Key`) |
-| `/snapshot` | GET | List `.github` directory snapshots |
-| `/snapshot` | POST | Create a new snapshot |
-| `/snapshot/changes` | GET | Check for file changes since last snapshot |
-| `/snapshot/check-and-create` | POST | Auto-snapshot if changes detected |
-| `/snapshot/watcher` | GET | Get change-watcher status |
-| `/snapshot/watcher/start` | POST | Start the change watcher |
-| `/snapshot/watcher/stop` | POST | Stop the change watcher |
+- System key file: `$CONDUCTOR_HOME/key`
+- API admin header: `X-Admin-Key`
+- Install key header: `X-Install-Key`
 
----
+Operational rules:
+- `replace` / `reset` disallow editing conductor agent content.
+- System-scope agent edits require key authorization.
 
-### setup-env
+## Startup behavior
 
-```
-con-pilot setup-env [--shell]
-```
+On `con-pilot serve` startup, the app lifecycle:
 
-Resolves the current project, prints all session environment variables, and spawns `con-pilot serve` as a background daemon.
+1. Loads config versions and snapshots.
+2. Ensures system agent files exist.
+3. Starts `CopilotAgentService`.
+4. Attempts to establish conductor Copilot session at startup.
+5. Starts periodic sync loop.
+
+Use `GET /api/v1/startup-proof` to verify actual runtime startup state.
+
+## Development checks
 
 ```bash
-# Add to your shell profile or .envrc:
-eval $(con-pilot setup-env --shell)
+cd src/python/con-pilot
+
+# tests
+pytest -q
+
+# lint/format
+uv run ruff check src tests
+uv run ruff format src tests
 ```
-
-```mermaid
-flowchart TD
-    SE(["setup-env"])
-    SE --> P["resolve PROJECT_NAME"]
-    P --> E["export env vars"]
-    E --> V1["CONDUCTOR_HOME"]
-    E --> V2["TRUSTED_DIRECTORIES"]
-    E --> V3["COPILOT_DEFAULT_MODEL"]
-    E --> V4["CONDUCTOR_AGENT_NAME"]
-    E --> V5["SIDEKICK_AGENT_NAME"]
-    E --> V6["PROJECT_NAME"]
-    SE --> W["spawn con-pilot serve"]
-    W --> V7["SYNC_AGENTS_PID"]
-```
-
-Output:
-
-```
-CONDUCTOR_HOME=/home/user/.conductor
-TRUSTED_DIRECTORIES=/home/user/.conductor:/home/user/projects/my-app
-COPILOT_DEFAULT_MODEL=claude-opus-4.6
-CONDUCTOR_AGENT_NAME=uppity
-SIDEKICK_AGENT_NAME=code-monkey-my-app-agent-1
-PROJECT_NAME=my-app
-SYNC_AGENTS_PID=48291
-```
-
----
-
-### register
-
-```
-con-pilot register <name> <directory>
-```
-
-Adds a project to `trust.json`, creates its agent directory scaffold, and runs an initial sync so all agent files are created immediately.
-
-```bash
-con-pilot register my-app /home/user/projects/my-app
-```
-
----
-
-### retire-project
-
-```
-con-pilot retire-project <name>
-```
-
-Moves `.github/projects/{name}/` to `.github/retired-projects/{name}/` and removes the project from `trust.json`. Non-destructive — the directory can be restored manually.
-
-```bash
-con-pilot retire-project my-app
-```
-
----
-
-### replace
-
-```
-con-pilot replace <file> <role> [project] [--key KEY]
-```
-
-Replaces the entire body of matching agent files while preserving the YAML frontmatter.
-
-```bash
-con-pilot replace new-body.md reviewer my-app
-```
-
----
-
-### reset
-
-```
-con-pilot reset <role> [project] [--key KEY]
-```
-
-Regenerates matching agent files from their template (`.github/agents/templates/{role}.agent.md`) or from `conductor.yaml` if no template exists.
-
-```bash
-con-pilot reset developer my-app
-con-pilot reset support --key $(cat $CONDUCTOR_HOME/key)
-```
-
----
-
-## Security
-
-```mermaid
-flowchart LR
-    CMD(["replace / reset"])
-    CMD --> R{"role scope?"}
-    R -->|"conductor"| BLK["🚫 always blocked"]
-    R -->|"system\nsupport / arbitrator"| K{"--key correct?"}
-    R -->|"project\ndeveloper / reviewer"| OK["✅ no key needed"]
-    K -->|yes| OK2["✅ allowed"]
-    K -->|no / missing| ERR["❌ ValueError"]
-```
-
-- **Conductor** (`conductor.agent.md`) is permanently blocked from modification via `replace` or `reset`.
-- **System agents** (`scope: system`) require `--key $(cat $CONDUCTOR_HOME/key)`.
-- **Project agents** (`scope: project`) require no key.
-
-The system key is a UUID auto-generated on first use and stored at `$CONDUCTOR_HOME/key`.
-
-Config management endpoints (`/config/{version}/activate`, `DELETE /config/{version}`) require an `X-Admin-Key` header.
-
----
-
-## Development
-
-```bash
-# Run the full test suite (144 tests)
-python3 -m pytest tests/ -v
-
-# With coverage
-python3 -m pytest tests/ -v --cov=con_pilot --cov-report=term-missing
-
-# Lint + format (via uv)
-uv run ruff check src/ && uv run ruff format src/
-
-# Build the AppImage (from the repo root)
-CONDUCTOR_HOME=$(pwd) task appimage:build
-```
-
-### AppImage build
-
-The AppImage bundles con-pilot with a uv-based launcher (`AppRun`). On first run it creates a portable venv and installs all wheels from the bundle:
 
 ```mermaid
 flowchart LR

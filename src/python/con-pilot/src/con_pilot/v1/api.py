@@ -94,6 +94,9 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         copilot_service = None
+        app.state.copilot_service = None
+        app.state.copilot_startup_complete = False
+        app.state.copilot_startup_error = None
 
         # Initialize config store and load all versions
         pilot.config_store.ensure_scores_dir()
@@ -136,8 +139,20 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
             app.state.copilot_service = copilot_service
             log.debug("Starting CopilotAgentService")
             await copilot_service.start()
-            log.info("CopilotAgentService startup complete")
+            app.state.copilot_startup_complete = bool(
+                getattr(copilot_service, "_client", None)
+                and getattr(copilot_service, "_conductor_session", None)
+            )
+            if app.state.copilot_startup_complete:
+                log.info("CopilotAgentService startup complete")
+            else:
+                app.state.copilot_startup_error = (
+                    "CopilotAgentService initialized but no active conductor session was "
+                    "created. Check GitHub token and SDK availability."
+                )
+                log.warning(app.state.copilot_startup_error)
         except Exception:
+            app.state.copilot_startup_error = "CopilotAgentService startup failed"
             log.exception("CopilotAgentService startup failed")
 
         def _loop() -> None:

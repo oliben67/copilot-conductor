@@ -2,6 +2,7 @@
 
 from con_pilot.core.models.config import (
     AgentConfig,
+    AgentPermissions,
     ConductorConfig,
     CronConfig,
     InstancePolicy,
@@ -21,6 +22,7 @@ __all__ = [
     # Config models
     "Agent",
     "AgentConfig",
+    "AgentPermissions",
     "Conductor",
     "ConductorConfig",
     "CronConfig",

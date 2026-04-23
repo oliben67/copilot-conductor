@@ -47,3 +47,5 @@ src/vscode/conduct-lectern/dist/
 src/vscode/conduct-lectern/.vscode-test/
 src/vscode/conduct-lectern/.task/
 src/vscode/conduct-lectern/package-lock.json
+
+.copilot/
