@@ -364,7 +364,9 @@ class TestAmend:
         instr.write_text("- From AppDir key.")
         _run("amend", str(instr), "support", "--key", "appdir-test-key", home=home)
 
-        content = (home / ".github" / "system" / "agents" / "support.agent.md").read_text()
+        content = (
+            home / ".github" / "system" / "agents" / "support.agent.md"
+        ).read_text()
         assert "- From AppDir key." in content
 
 

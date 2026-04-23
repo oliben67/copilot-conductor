@@ -4,7 +4,6 @@ This module sets up the main APIRouter for v1 and provides
 the ConPilot dependency injection.
 """
 
-import logging
 import os
 import threading
 import time
@@ -12,6 +11,8 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, FastAPI
+
+from con_pilot.logger import app_logger
 
 from con_pilot.v1.endpoints import (
     agents_router,
@@ -28,7 +29,7 @@ from con_pilot.v1.endpoints import (
 if TYPE_CHECKING:
     from con_pilot.conductor import ConPilot
 
-log = logging.getLogger(__name__)
+log = app_logger.bind(module=__name__)
 
 # Global reference to the ConPilot instance (set at app creation)
 _pilot: ConPilot | None = None
@@ -92,6 +93,8 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        copilot_service = None
+
         # Initialize config store and load all versions
         pilot.config_store.ensure_scores_dir()
         pilot.config_store.load_all()
@@ -121,7 +124,21 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
         # Start snapshot watcher (check for changes every 60 seconds)
         pilot.snapshot_service.start_watcher(interval=60)
 
+        log.debug("Ensuring system agent files exist")
         pilot._ensure_system_agents()
+        log.debug("System agent files ensured")
+
+        # Start Copilot SDK service so conductor session exists at startup.
+        try:
+            from con_pilot.core.services.copilot_service import CopilotAgentService  # noqa: PLC0415
+
+            copilot_service = CopilotAgentService(pilot)
+            app.state.copilot_service = copilot_service
+            log.debug("Starting CopilotAgentService")
+            await copilot_service.start()
+            log.info("CopilotAgentService startup complete")
+        except Exception:
+            log.exception("CopilotAgentService startup failed")
 
         def _loop() -> None:
             while True:
@@ -139,6 +156,14 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
 
         # Cleanup: stop snapshot watcher
         pilot.snapshot_service.stop_watcher()
+
+        if copilot_service is not None:
+            try:
+                log.debug("Stopping CopilotAgentService")
+                await copilot_service.stop()
+                log.info("CopilotAgentService stopped")
+            except Exception:
+                log.exception("CopilotAgentService shutdown failed")
 
     app = FastAPI(title="con-pilot", lifespan=lifespan)
     app.include_router(router, prefix=_api_prefix())

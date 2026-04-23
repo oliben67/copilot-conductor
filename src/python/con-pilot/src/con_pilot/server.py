@@ -7,6 +7,7 @@ This exists so uvicorn can target ``con_pilot.server:create_app`` with
 
 from con_pilot.conductor import ConPilot
 
+
 def create_app():
     """Return the FastAPI app wired to a fresh ConPilot instance."""
     return ConPilot().create_app()

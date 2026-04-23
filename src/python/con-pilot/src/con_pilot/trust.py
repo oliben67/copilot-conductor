@@ -7,14 +7,15 @@ Manages the trust.json file that tracks registered projects and their directorie
 from __future__ import annotations
 
 import json
-import logging
 import os
 from typing import TYPE_CHECKING
+
+from con_pilot.logger import app_logger
 
 if TYPE_CHECKING:
     from con_pilot.paths import PathResolver
 
-log = logging.getLogger(__name__)
+log = app_logger.bind(module=__name__)
 
 
 class TrustRegistry:

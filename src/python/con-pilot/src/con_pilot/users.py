@@ -17,13 +17,14 @@ Schema of users.json:
 
 import hashlib
 import json
-import logging
 import os
 import secrets
 import threading
 from dataclasses import asdict, dataclass
 
-log = logging.getLogger(__name__)
+from con_pilot.logger import app_logger
+
+log = app_logger.bind(module=__name__)
 
 _PBKDF2_ITERS = 260_000  # NIST recommendation for SHA-256
 _LOCK = threading.Lock()

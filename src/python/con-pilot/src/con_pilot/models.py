@@ -4,9 +4,12 @@ New code should import directly from con_pilot.core.models.
 """
 
 from con_pilot.core.models import (
+    Agent,
     AgentConfig,
+    AgentDetailResponse,
     AgentInfo,
     AgentListResponse,
+    Conductor,
     ConductorConfig,
     CronConfig,
     InstancePolicy,
@@ -21,9 +24,12 @@ from con_pilot.exceptions import AgentNamingPatternException
 
 __all__ = [
     "AgentConfig",
+    "AgentDetailResponse",
     "AgentInfo",
     "AgentListResponse",
+    "Agent",
     "AgentNamingPatternException",
+    "Conductor",
     "ConductorConfig",
     "CronConfig",
     "InstancePolicy",

@@ -48,7 +48,12 @@ Service commands:
   status                     Show whether con-pilot is running
   sync                       Trigger a one-shot sync cycle
   logs [-n N] [-f]           Show service logs (last 10 lines; -f to follow)
-  agents [-p PROJECT] [-j]   List all agents (-j for JSON)
+  agents show --all [-f]     List all agents (-f JSON indent=2)
+  agents show <name> [-f]    Show details for a single agent (-f JSON indent=2)
+  agents config show [name] [-j]
+                             Show one/all agent configurations
+  agents config modify <name> [fields] --key KEY [-j]
+                             Modify one agent configuration
 
 Project commands:
   register <name> <dir>      Register a new project
@@ -197,29 +202,54 @@ EOF
 
 usage_agents() {
   cat <<EOF
-conduct agents — List all agents
+conduct agents — List or inspect agents
 
 Usage:
-  conduct agents [options]
+  conduct agents show --all [-f]
+  conduct agents show <name> [-f]
+  conduct agents config show [name] [-j]
+  conduct agents config modify <name> [fields] --key KEY [-j]
 
-Description:
-  Lists all configured agents (system and project scoped) from the
-  con-pilot service, showing their status and file locations.
+Subcommands:
+  show --all       List all agents (system and project scoped)
+  show <name>      Show detailed properties for a single agent by role key
+                   or display name, including permissions and assigned tasks
+  config show      Show agent configuration for all agents or one named agent
+  config modify    Modify mutable fields on one agent configuration
 
-Options:
-  -p, --project PROJECT   Filter agents by project name
-  -j, --json              Output raw JSON response
+Options (show):
+  --all                   List all agents instead of showing one
+  -f                      Output JSON response (indent=2)
   --help, -h              Show this help message
 
-Output:
+Options (config show):
+  -j, --json              Output JSON response (default is human-readable)
+  --help, -h              Show this help message
+
+Options (config modify):
+  --name VALUE            Set agent display name
+  --active true|false     Set active flag
+  --sidekick true|false   Set sidekick flag
+  --augmenting true|false Set augmenting flag
+  --model VALUE           Set model (empty string clears)
+  --description VALUE     Set description (empty string clears)
+  --instructions VALUE    Set instructions (empty string clears)
+  --key KEY               Admin key (required)
+  -j, --json              Output JSON response
+  --help, -h              Show this help message
+
+Output (list):
   ✓ = agent file exists    ✗ = agent file missing
   [sidekick] = designated sidekick agent
 
 Examples:
-  conduct agents                     # List all agents
-  conduct agents -p my-project       # List agents for specific project
-  conduct agents -j                  # Output as JSON
-  conduct agents -p my-project -j    # JSON for specific project
+  conduct agents show --all          # List all agents
+  conduct agents show --all -f       # JSON list output (indent=2)
+  conduct agents show developer      # Show developer agent details
+  conduct agents show code-monkey -f # JSON output for named agent
+  conduct agents config show         # Show config for all agents
+  conduct agents config show git -j  # Show config for git agent in JSON
+  conduct agents config modify git --active false --key abc-123
 EOF
 }
 
@@ -311,6 +341,15 @@ EOF
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+print_json_pretty() {
+  local payload="$1"
+  if command -v jq >/dev/null 2>&1 && printf '%s' "$payload" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "$payload" | jq --indent 2 '.'
+  else
+    printf '%s\n' "$payload"
+  fi
+}
+
 require_key() {
   if [[ -z "${ADMIN_KEY:-}" ]]; then
     echo "Error: --key is required for admin commands." >&2
@@ -330,16 +369,61 @@ api_get() {
   return 1
 }
 
+# Like api_get but outputs "<http_status> <body>" so callers can distinguish
+# 404 (not found) from connection failures (status 000).
+api_get_status() {
+  local endpoint="$1" out http_status body
+  for url in "${API_URL}${endpoint}" "${BASE_URL}${endpoint}" "${BASE_URL}/v1${endpoint}"; do
+    out="$(curl -s --connect-timeout 2 --max-time 5 -w '\n%{http_code}' "$url" 2>/dev/null)" || true
+    http_status="${out##*$'\n'}"
+    body="${out%$'\n'*}"
+    if [[ "$http_status" =~ ^[2-9][0-9][0-9]$ ]]; then
+      printf '%s\n%s' "$http_status" "$body"
+      return 0
+    elif [[ "$http_status" =~ ^[0-9]+$ && "$http_status" != "000" ]]; then
+      # Got an HTTP response (e.g. 404) — not a connection failure
+      printf '%s\n%s' "$http_status" "$body"
+      return 1
+    fi
+    # connection failure (status 000) — try next URL variant
+  done
+  printf '000\n'
+  return 1
+}
+
 api_post() {
-  local endpoint="$1" body="$2"
+  local endpoint="$1" body="$2" response
   local url
   for url in "${API_URL}${endpoint}" "${BASE_URL}${endpoint}" "${BASE_URL}/v1${endpoint}"; do
-    if curl -sf -X POST "$url" \
+    if response="$(curl -sf -X POST "$url" \
       -H "Content-Type: application/json" \
-      -d "$body"; then
+      -d "$body")"; then
+      print_json_pretty "$response"
       return 0
     fi
   done
+  return 1
+}
+
+api_patch_status_with_key() {
+  local endpoint="$1" body="$2" key="$3" out http_status resp
+  for url in "${API_URL}${endpoint}" "${BASE_URL}${endpoint}" "${BASE_URL}/v1${endpoint}"; do
+    out="$(curl -s --connect-timeout 2 --max-time 10 -X PATCH "$url" \
+      -H "Content-Type: application/json" \
+      -H "X-Admin-Key: ${key}" \
+      -d "$body" \
+      -w '\n%{http_code}' 2>/dev/null)" || true
+    http_status="${out##*$'\n'}"
+    resp="${out%$'\n'*}"
+    if [[ "$http_status" =~ ^[2-9][0-9][0-9]$ ]]; then
+      printf '%s\n%s' "$http_status" "$resp"
+      return 0
+    elif [[ "$http_status" =~ ^[0-9]+$ && "$http_status" != "000" ]]; then
+      printf '%s\n%s' "$http_status" "$resp"
+      return 1
+    fi
+  done
+  printf '000\n'
   return 1
 }
 
@@ -349,6 +433,10 @@ endpoint_spec() {
     version) echo "GET ${API_PREFIX}/version" ;;
     login) echo "POST ${API_PREFIX}/login" ;;
     agents) echo "GET ${API_PREFIX}/agents" ;;
+    agent-detail) echo "GET ${API_PREFIX}/agents/{name}" ;;
+    agent-config) echo "GET ${API_PREFIX}/agents/config" ;;
+    agent-config-detail) echo "GET ${API_PREFIX}/agents/config/{name}" ;;
+    agent-config-modify) echo "PATCH ${API_PREFIX}/agents/config/{name}" ;;
     setup-env) echo "GET ${API_PREFIX}/setup-env" ;;
     validate) echo "POST ${API_PREFIX}/validate" ;;
     sync) echo "POST ${API_PREFIX}/sync" ;;
@@ -397,6 +485,10 @@ cmd_end_points() {
     version                   | GET  ${API_PREFIX}/version                | args: none                                   | body: none
     login                     | POST ${API_PREFIX}/login                  | args: none                                   | body: {"username":"<user>","password":"<pass>"}
     agents                    | GET  ${API_PREFIX}/agents                 | args: ?project=<name>                        | body: none
+    agent-detail              | GET  ${API_PREFIX}/agents/{name}          | args: name=<role-or-display-name>            | body: none
+    agent-config              | GET  ${API_PREFIX}/agents/config          | args: none                                   | body: none
+    agent-config-detail       | GET  ${API_PREFIX}/agents/config/{name}   | args: name=<role-or-display-name>            | body: none
+    agent-config-modify       | PATCH ${API_PREFIX}/agents/config/{name}  | args: name=<role-or-display-name>, header X-Admin-Key:<key> | body: partial config fields
     setup-env                 | GET  ${API_PREFIX}/setup-env              | args: none                                   | body: none
     validate                  | POST ${API_PREFIX}/validate               | args: none                                   | body: {"project":"<name>"}
     sync                      | POST ${API_PREFIX}/sync                   | args: none                                   | body: none
@@ -472,7 +564,7 @@ EOF
       fi
 
       if command -v jq >/dev/null 2>&1; then
-        echo "$body" | jq .
+        echo "$body" | jq --indent 2 .
       else
         echo "$body"
       fi
@@ -599,6 +691,31 @@ cmd_logs() {
 }
 
 cmd_agents() {
+  if [[ $# -eq 0 ]]; then
+    echo "Error: 'conduct agents' requires a subcommand." >&2
+    echo "Use: conduct agents show --all" >&2
+    exit 1
+  fi
+
+  local subcmd=""
+  case "$1" in
+    show|config) subcmd="$1"; shift ;;
+    -h|--help) usage_agents; exit 0 ;;
+    *)
+      echo "Error: Unknown agents subcommand '$1'" >&2
+      echo "Use: conduct agents show --all" >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "$subcmd" == "show" ]]; then
+    _cmd_agents_show "$@"
+  else
+    _cmd_agents_config "$@"
+  fi
+}
+
+_cmd_agents_list() {
   local project="" json=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -621,9 +738,8 @@ cmd_agents() {
   fi
 
   if [[ -n "$json" ]]; then
-    echo "$response"
+    print_json_pretty "$response"
   else
-    # Human-readable output using jq
     echo "$response" | jq -r '
       "System Agents:",
       "------------------------------------------------------------",
@@ -637,6 +753,366 @@ cmd_agents() {
       )
     '
   fi
+}
+
+_cmd_agents_show() {
+  local json="" name="" all=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_agents; exit 0 ;;
+      -f) json="1"; shift ;;
+      --all) all="1"; shift ;;
+      -*) echo "Unknown option: $1" >&2; exit 1 ;;
+      *)
+        if [[ -z "$name" ]]; then
+          name="$1"
+          shift
+        else
+          echo "Unexpected argument: $1" >&2
+          echo "Usage: conduct agents show --all [-f] | conduct agents show <name> [-f]" >&2
+          exit 1
+        fi
+        ;;
+    esac
+  done
+
+  if [[ -n "$all" && -n "$name" ]]; then
+    echo "Error: --all cannot be combined with an agent name" >&2
+    echo "Usage: conduct agents show --all [-f] | conduct agents show <name> [-f]" >&2
+    exit 1
+  fi
+
+  if [[ -n "$all" ]]; then
+    _cmd_agents_list ${json:+-j}
+    return
+  fi
+
+  if [[ -z "$name" ]]; then
+    echo "Usage: conduct agents show --all [-f] | conduct agents show <name> [-f]" >&2
+    exit 1
+  fi
+
+  local api_out http_status response
+  api_out=$(api_get_status "/agents/${name}") || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  if [[ "$http_status" == "404" ]]; then
+    echo "Error: Agent '${name}' not found" >&2
+    exit 1
+  elif [[ -z "$response" || "$http_status" == "000" || ! "$http_status" =~ ^2 ]]; then
+    echo "Error: Service unreachable at $BASE_URL" >&2
+    exit 1
+  fi
+
+  if [[ -n "$json" ]]; then
+    print_json_pretty "$response"
+    return
+  fi
+
+  echo "$response" | jq -r '
+    "Agent: \(.name) (\(.role))",
+    "------------------------------------------------------------",
+    "  Scope:       \(.scope)",
+    "  Active:      \(if .active then "yes" else "no" end)",
+    "  File:        \(if .file_exists then .file_path else "[missing]" end)",
+    (if .model then "  Model:       \(.model)" else empty end),
+    (if .description then "  Description: \(.description)" else empty end),
+    (if .sidekick then "  Sidekick:    yes" else empty end),
+    (if .augmenting then "  Augmenting:  yes" else empty end),
+    "",
+    "  Permissions (\(.permissions | length)):",
+    (.permissions[] | "    - \(.)"),
+    "",
+    "  Assigned Tasks (\(.tasks | length)):",
+    if (.tasks | length) == 0 then "    (none)"
+    else
+      (.tasks[] |
+        "    \(.name)\(if .cron then " [cron: \(.cron)]" else " [manual]" end)",
+        "      \(.description)"
+      )
+    end,
+    (if .cron then "\n  Own Cron Schedule: \(.cron.expression)" else empty end),
+    (if .instances then "\n  Instances: min=\(.instances.min) max=\(.instances.max // .instances.min)" else empty end),
+    (if .instructions then "\n  Instructions:\n\(.instructions | split("\n") | map("    " + .) | join("\n"))" else empty end)
+  '
+}
+
+_cmd_agents_config() {
+  local subcmd="show"
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      show|modify) subcmd="$1"; shift ;;
+      -h|--help) usage_agents; exit 0 ;;
+    esac
+  fi
+
+  case "$subcmd" in
+    show) _cmd_agents_config_show "$@" ;;
+    modify) _cmd_agents_config_modify "$@" ;;
+  esac
+}
+
+_cmd_agents_config_show() {
+  local json="" name=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_agents; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      -*) echo "Unknown option: $1" >&2; exit 1 ;;
+      *)
+        if [[ -z "$name" ]]; then
+          name="$1"
+          shift
+        else
+          echo "Unexpected argument: $1" >&2
+          echo "Usage: conduct agents config show [name] [-j]" >&2
+          exit 1
+        fi
+        ;;
+    esac
+  done
+
+  local api_out http_status response
+  if [[ -n "$name" ]]; then
+    api_out=$(api_get_status "/agents/config/${name}") || true
+    http_status="$(echo "$api_out" | head -1)"
+    response="$(echo "$api_out" | tail -n +2)"
+    if [[ "$http_status" == "404" ]]; then
+      echo "Error: Agent '${name}' not found" >&2
+      exit 1
+    elif [[ -z "$response" || "$http_status" == "000" || ! "$http_status" =~ ^2 ]]; then
+      echo "Error: Service unreachable at $BASE_URL" >&2
+      exit 1
+    fi
+  else
+    response=$(api_get "/agents/config") || true
+    if [[ -z "$response" ]]; then
+      echo "Error: Could not reach con-pilot service at $BASE_URL" >&2
+      exit 1
+    fi
+  fi
+
+  if [[ -n "$json" ]]; then
+    print_json_pretty "$response"
+    return
+  fi
+
+  if [[ -n "$name" ]]; then
+    echo "$response" | jq --indent 2 .
+  else
+    echo "$response" | jq -r '
+      "Agent Configurations:",
+      "------------------------------------------------------------",
+      (to_entries[] |
+        "\(.key):",
+        "  name: \(.value.name // .key)",
+        "  scope: \(.value.scope)",
+        "  active: \(if .value.active then "yes" else "no" end)",
+        "  model: \(.value.model // "[default]")",
+        "  running: \(if .value.running then "yes" else "no" end)",
+        ""
+      )
+    '
+  fi
+}
+
+_cmd_agents_config_modify() {
+  local name="" json="" key=""
+  local set_name="" set_model="" set_description="" set_instructions=""
+  local set_active="" set_sidekick="" set_augmenting=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_agents; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      --key)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --key requires a value" >&2
+          exit 1
+        fi
+        key="$2"; shift 2 ;;
+      --name)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --name requires a value" >&2
+          exit 1
+        fi
+        set_name="$2"; shift 2 ;;
+      --active)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --active requires true|false" >&2
+          exit 1
+        fi
+        set_active="$2"; shift 2 ;;
+      --sidekick)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --sidekick requires true|false" >&2
+          exit 1
+        fi
+        set_sidekick="$2"; shift 2 ;;
+      --augmenting)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --augmenting requires true|false" >&2
+          exit 1
+        fi
+        set_augmenting="$2"; shift 2 ;;
+      --model)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --model requires a value" >&2
+          exit 1
+        fi
+        set_model="$2"; shift 2 ;;
+      --description)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --description requires a value" >&2
+          exit 1
+        fi
+        set_description="$2"; shift 2 ;;
+      --instructions)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --instructions requires a value" >&2
+          exit 1
+        fi
+        set_instructions="$2"; shift 2 ;;
+      -*)
+        echo "Unknown option: $1" >&2
+        exit 1
+        ;;
+      *)
+        if [[ -z "$name" ]]; then
+          name="$1"
+          shift
+        else
+          echo "Unexpected argument: $1" >&2
+          echo "Usage: conduct agents config modify <name> [fields] --key KEY [-j]" >&2
+          exit 1
+        fi
+        ;;
+    esac
+  done
+
+  if [[ -z "$name" ]]; then
+    echo "Usage: conduct agents config modify <name> [fields] --key KEY [-j]" >&2
+    exit 1
+  fi
+  if [[ -z "$key" ]]; then
+    echo "Error: --key is required" >&2
+    exit 1
+  fi
+
+  local payload='{}'
+  local change_count=0
+  if [[ -n "$set_name" ]]; then
+    payload="$(echo "$payload" | jq --arg v "$set_name" '. + {name:$v}')"
+    change_count=$((change_count + 1))
+  fi
+  if [[ -n "$set_model" ]]; then
+    if [[ "$set_model" == "" ]]; then
+      payload="$(echo "$payload" | jq '. + {model:null}')"
+    else
+      payload="$(echo "$payload" | jq --arg v "$set_model" '. + {model:$v}')"
+    fi
+    change_count=$((change_count + 1))
+  fi
+  if [[ -n "$set_description" ]]; then
+    if [[ "$set_description" == "" ]]; then
+      payload="$(echo "$payload" | jq '. + {description:null}')"
+    else
+      payload="$(echo "$payload" | jq --arg v "$set_description" '. + {description:$v}')"
+    fi
+    change_count=$((change_count + 1))
+  fi
+  if [[ -n "$set_instructions" ]]; then
+    if [[ "$set_instructions" == "" ]]; then
+      payload="$(echo "$payload" | jq '. + {instructions:null}')"
+    else
+      payload="$(echo "$payload" | jq --arg v "$set_instructions" '. + {instructions:$v}')"
+    fi
+    change_count=$((change_count + 1))
+  fi
+
+  case "$set_active" in
+    true|false)
+      payload="$(echo "$payload" | jq --argjson v "$set_active" '. + {active:$v}')"
+      change_count=$((change_count + 1))
+      ;;
+    "") ;;
+    *)
+      echo "Error: --active must be true or false" >&2
+      exit 1
+      ;;
+  esac
+
+  case "$set_sidekick" in
+    true|false)
+      payload="$(echo "$payload" | jq --argjson v "$set_sidekick" '. + {sidekick:$v}')"
+      change_count=$((change_count + 1))
+      ;;
+    "") ;;
+    *)
+      echo "Error: --sidekick must be true or false" >&2
+      exit 1
+      ;;
+  esac
+
+  case "$set_augmenting" in
+    true|false)
+      payload="$(echo "$payload" | jq --argjson v "$set_augmenting" '. + {augmenting:$v}')"
+      change_count=$((change_count + 1))
+      ;;
+    "") ;;
+    *)
+      echo "Error: --augmenting must be true or false" >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "$change_count" -eq 0 ]]; then
+    echo "Error: no config fields provided to modify" >&2
+    exit 1
+  fi
+
+  local api_out http_status response
+  api_out="$(api_patch_status_with_key "/agents/config/${name}" "$payload" "$key")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+
+  case "$http_status" in
+    200)
+      if [[ -n "$json" ]]; then
+        print_json_pretty "$response"
+      else
+        echo "$response" | jq -r '
+          "Updated Agent Config: \(.name) (\(.role))",
+          "------------------------------------------------------------",
+          "  Scope:       \(.scope)",
+          "  Active:      \(if .active then "yes" else "no" end)",
+          "  Sidekick:    \(if .sidekick then "yes" else "no" end)",
+          "  Augmenting:  \(if .augmenting then "yes" else "no" end)",
+          "  Model:       \(.model // "[default]")",
+          (if .description then "  Description: \(.description)" else empty end),
+          (if .instructions then "  Instructions: \(.instructions)" else empty end)
+        '
+      fi
+      ;;
+    400|401|403|404|422)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      if [[ -n "$response" ]]; then
+        echo "$response" >&2
+      fi
+      exit 1
+      ;;
+    000)
+      echo "Error: Service unreachable at $BASE_URL" >&2
+      exit 1
+      ;;
+    *)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      if [[ -n "$response" ]]; then
+        echo "$response" >&2
+      fi
+      exit 1
+      ;;
+  esac
 }
 
 # ── Project commands ──────────────────────────────────────────────────────────

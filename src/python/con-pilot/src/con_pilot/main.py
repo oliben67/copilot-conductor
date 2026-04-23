@@ -20,26 +20,12 @@ Usage
 """
 
 import argparse
-import logging
-import os
+
+from con_pilot.logger import setup_file_logging
 
 
 def _setup_logging() -> None:
-    log_file = os.path.join(
-        os.environ.get("CONDUCTOR_HOME", os.path.expanduser("~/.conductor")),
-        "con-pilot.log",
-    )
-    os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    handler = logging.FileHandler(log_file)
-    handler.setFormatter(
-        logging.Formatter(
-            "[con-pilot %(asctime)s] %(levelname)s %(message)s",
-            datefmt="%H:%M:%S",
-        )
-    )
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    root.addHandler(handler)
+    setup_file_logging()
 
 
 def main() -> None:

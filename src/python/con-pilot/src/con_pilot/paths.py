@@ -24,7 +24,9 @@ def resolve_key_file(conductor_home: str | None = None) -> str:
     if home:
         # Source-tree AppImage layout used by tests.
         candidates.append(
-            os.path.join(home, "src", "python", "con-pilot", "appimage", "AppDir", "key")
+            os.path.join(
+                home, "src", "python", "con-pilot", "appimage", "AppDir", "key"
+            )
         )
         # Legacy location used by older tests/layout.
         candidates.append(os.path.join(home, "python", "con-pilot", "key"))

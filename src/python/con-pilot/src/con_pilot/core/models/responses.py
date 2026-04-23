@@ -1,8 +1,12 @@
 """Response models for API endpoints."""
 
+from __future__ import annotations
+
 from typing import Literal
 
 from pydantic import BaseModel, Field
+
+from con_pilot.core.models.config import CronConfig, InstancePolicy, TaskConfig
 
 
 class AgentInfo(BaseModel):
@@ -33,6 +37,10 @@ class AgentInfo(BaseModel):
     )
     model: str | None = Field(default=None, description="Model override, if any.")
     description: str | None = Field(default=None, description="Agent description.")
+    running: bool = Field(
+        default=False,
+        description="Whether the runtime session for this agent is currently running.",
+    )
 
 
 class AgentListResponse(BaseModel):
@@ -44,6 +52,33 @@ class AgentListResponse(BaseModel):
     project_agents: list[AgentInfo] = Field(
         default_factory=list, description="Project-scoped agents."
     )
+
+
+class AgentDetailResponse(AgentInfo):
+    """Detailed information about a single agent, including permissions and tasks."""
+
+    permissions: list[str] = Field(
+        default_factory=list,
+        description="List of enabled permission names for this agent.",
+    )
+    tasks: list[TaskConfig] = Field(
+        default_factory=list,
+        description="Tasks assigned to this agent.",
+    )
+    cron: CronConfig | None = Field(
+        default=None,
+        description="The agent's own cron schedule configuration, if any.",
+    )
+    instances: InstancePolicy | None = Field(
+        default=None,
+        description="Instance concurrency policy, if applicable.",
+    )
+    instructions: str | None = Field(
+        default=None,
+        description="Custom instructions for the agent.",
+    )
+
+    model_config = {"arbitrary_types_allowed": True}
 
 
 class ValidationError(BaseModel):

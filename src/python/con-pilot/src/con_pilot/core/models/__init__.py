@@ -8,7 +8,9 @@ from con_pilot.core.models.config import (
     ModelsConfig,
     VersionConfig,
 )
+from con_pilot.core.models.runtime import Agent, Conductor
 from con_pilot.core.models.responses import (
+    AgentDetailResponse,
     AgentInfo,
     AgentListResponse,
     ValidationError,
@@ -17,13 +19,16 @@ from con_pilot.core.models.responses import (
 
 __all__ = [
     # Config models
+    "Agent",
     "AgentConfig",
+    "Conductor",
     "ConductorConfig",
     "CronConfig",
     "InstancePolicy",
     "ModelsConfig",
     "VersionConfig",
     # Response models
+    "AgentDetailResponse",
     "AgentInfo",
     "AgentListResponse",
     "ValidationError",

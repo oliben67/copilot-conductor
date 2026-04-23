@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import tarfile
 import threading
@@ -20,9 +19,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from con_pilot.logger import app_logger
 from con_pilot.paths import PathResolver
 
-log = logging.getLogger(__name__)
+log = app_logger.bind(module=__name__)
 
 
 # File patterns to include in snapshots

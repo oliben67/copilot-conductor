@@ -27,14 +27,14 @@ from copilot.generated.session_events import (
     PermissionRequest,
     SessionIdleData,
 )
-from copilot.logger import logger as copilot_logger
 from copilot.session import PermissionHandler, PermissionRequestResult
 
-from con_pilot.core.models import AgentConfig, AgentPermissions
+from con_pilot.core.models import Agent, AgentConfig, AgentPermissions
+from con_pilot.logger import app_logger
 
 HAS_COPILOT_SDK = True
 
-log = copilot_logger.bind(component="CopilotAgentService")
+log = app_logger.bind(module=__name__, component="CopilotAgentService")
 
 
 class SpawnAgentParams(BaseModel):
@@ -91,6 +91,7 @@ class CopilotAgentService:
         self._client: CopilotClient | None = None
         self._conductor_session: Any = None
         self._active_sessions: dict[str, Any] = {}  # role -> session
+        Agent.set_running_checker(self._is_agent_running)
 
     @property
     def is_available(self) -> bool:
@@ -114,15 +115,20 @@ class CopilotAgentService:
             return
 
         log.info("Starting Copilot agent service...")
+        log.debug("Copilot service start: loading conductor configuration")
 
         # Get conductor configuration
         conductor_cfg = self._pilot.config.agents.get("conductor")
         if not conductor_cfg:
             log.error("Conductor agent not found in configuration")
             return
+        log.debug("Conductor config loaded", conductor_name=conductor_cfg.name)
 
         # Initialize the client
         github_token = self._pilot.github_token
+        if github_token is None:
+            log.error("GitHub token not available; cannot initialize Copilot client")
+            return
         config = SubprocessConfig(
             cwd=self._pilot.home,
             github_token=github_token.value,
@@ -131,14 +137,18 @@ class CopilotAgentService:
                 "COPILOT_DEFAULT_MODEL": self._pilot.default_model,
             },
         )
-        log.info(f"Initializing Copilot client with config: {config}")
+        log.debug("Initializing Copilot client", cwd=self._pilot.home)
         self._client = CopilotClient(config)
         await self._client.start()
+        log.debug("Copilot client started")
 
         # Create conductor session
+        log.debug("Creating conductor session via Copilot SDK")
         await self._create_conductor_session(conductor_cfg)
+        self._refresh_agent_running_flags()
 
         # Send system agents context to conductor
+        log.debug("Sending initial system-agent context to conductor")
         await self._initialize_conductor_with_agents()
 
         log.info("Copilot agent service started. Conductor session active.")
@@ -165,6 +175,7 @@ class CopilotAgentService:
         self._client = None
         self._conductor_session = None
         self._active_sessions.clear()
+        self._refresh_agent_running_flags()
 
         log.info("Copilot agent service stopped.")
 
@@ -199,6 +210,7 @@ class CopilotAgentService:
             on_permission_request=permission_handler,
             streaming=True,
         )
+        log.debug("Conductor session created", session_id=f"conductor-{conductor_cfg.name}")
 
         log.info(
             "Conductor session created: %s (model: %s)",
@@ -372,6 +384,7 @@ class CopilotAgentService:
             )
 
             self._active_sessions[session_key] = session
+            self._refresh_agent_running_flags()
             log.info("Spawned agent: %s (model: %s)", cfg.name, model)
 
             return f"Successfully spawned agent '{cfg.name}' for role '{role}'"
@@ -570,3 +583,28 @@ for task delegation.
             log.warning("Conductor response timed out")
 
         return "".join(response_parts) if response_parts else None
+
+    def _is_agent_running(self, agent_name: str) -> bool:
+        """Return True when a Copilot SDK session appears active for this agent name."""
+        target = (agent_name or "").strip().lower()
+        if not target:
+            return False
+
+        sessions: list[Any] = []
+        if self._conductor_session is not None:
+            sessions.append(self._conductor_session)
+        sessions.extend(self._active_sessions.values())
+
+        for session in sessions:
+            session_id = str(getattr(session, "session_id", getattr(session, "id", "")))
+            if target in session_id.lower():
+                return True
+        return False
+
+    def _refresh_agent_running_flags(self) -> None:
+        """Refresh running flags for runtime Agent instances in the singleton config."""
+        cfg = self._pilot.config
+        for role, agent_cfg in cfg.agents.items():
+            if isinstance(agent_cfg, Agent):
+                name = agent_cfg.name or role
+                agent_cfg.running = self._is_agent_running(name)

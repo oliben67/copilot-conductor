@@ -12,15 +12,15 @@ Credentials for username/password login:
 """
 
 import base64
-import logging
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
 
 import jwt
+from con_pilot.logger import app_logger
 from con_pilot.paths import resolve_key_file
 
-log = logging.getLogger(__name__)
+log = app_logger.bind(module=__name__)
 
 _TOKEN_EXPIRY_SECONDS = 3600  # 1 hour
 

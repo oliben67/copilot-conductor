@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import difflib
 import json
-import logging
 import os
 from datetime import UTC, datetime
 
@@ -17,10 +16,11 @@ import yaml
 from pydantic import BaseModel, Field
 
 from con_pilot.core.models.config import ConductorConfig
+from con_pilot.logger import app_logger
 
 from con_pilot.paths import PathResolver
 
-log = logging.getLogger(__name__)
+log = app_logger.bind(module=__name__)
 
 
 class ConfigVersion(BaseModel):

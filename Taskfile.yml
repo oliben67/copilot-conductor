@@ -193,7 +193,9 @@ tasks:
 
         if [[ -f "$KEY_FILE" ]]; then
           echo ""
-          echo "ADMIN KEY (shown once): $(cat "$KEY_FILE")"
+          echo "+---------------------------------------------------------------------+"
+          echo "+  ADMIN KEY (shown ONLY ONCE): $(cat "$KEY_FILE")  +"
+          echo "+---------------------------------------------------------------------+"
           echo ""
         else
           echo "Warning: no embedded admin key found in $DEST"

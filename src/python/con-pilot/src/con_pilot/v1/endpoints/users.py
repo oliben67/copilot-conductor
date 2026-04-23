@@ -1,6 +1,5 @@
 """POST /v1/create-user endpoint — admin-only, authenticated by the install key."""
 
-import logging
 import os
 from pathlib import Path
 
@@ -8,10 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator
 
+from con_pilot.logger import app_logger
 from con_pilot.paths import resolve_key_file
 from con_pilot.users import create_user
 
-log = logging.getLogger(__name__)
+log = app_logger.bind(module=__name__)
 
 router = APIRouter(tags=["admin"])
 

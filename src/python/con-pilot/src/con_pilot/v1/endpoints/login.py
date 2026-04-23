@@ -1,14 +1,13 @@
 """Login endpoint — issue JWT tokens via username/password or token pass-through."""
 
-import logging
-
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, model_validator
 
 from con_pilot.jwt_auth import check_credentials, issue_token, verify_token
+from con_pilot.logger import app_logger
 from con_pilot.session_id import SessionIdField
 
-log = logging.getLogger(__name__)
+log = app_logger.bind(module=__name__)
 
 router = APIRouter(tags=["auth"])
 

@@ -6,7 +6,6 @@ session-env resolution, watcher management, and HTTP service) lives here.
 """
 
 import json
-import logging
 import os
 import re
 import shutil
@@ -16,6 +15,7 @@ import textwrap
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -24,13 +24,17 @@ from con_pilot.auth import (
     resolve_github_token,
 )
 from con_pilot.models import (
+    Agent,
+    AgentDetailResponse,
     AgentInfo,
     AgentListResponse,
+    Conductor,
     ConductorConfig,
     ValidationError,
     ValidationResult,
 )
 from con_pilot.paths import PathResolver
+from con_pilot.logger import app_logger
 from con_pilot.trust import TrustRegistry
 
 try:
@@ -40,7 +44,7 @@ try:
 except ImportError:
     HAS_CRONITER = False
 
-log = logging.getLogger(__name__)
+log = app_logger.bind(module=__name__)
 
 _CRON_PLACEHOLDER = """\
 # Cron jobs for the {role} agent.
@@ -82,7 +86,7 @@ class ConPilot:
 
         self._paths = PathResolver(conductor_home)
         self._trust = TrustRegistry(self._paths)
-        self._cfg: ConductorConfig | None = None
+        self._cfg: Conductor | None = None
         self._config_store = ConfigStore(self._paths)
         self._snapshot_service = SnapshotService(self._paths)
 
@@ -225,13 +229,14 @@ class ConPilot:
         """Return conductor config (lazy-loaded, cached per instance)."""
         if self._cfg is None:
             data = self._load_config_file(self.config_path)
-            self._cfg = ConductorConfig(**data)
+            self._cfg = Conductor.instance(data)
         return self._cfg
 
     def reload_config(self) -> ConductorConfig:
         """Discard the cached config and reload from disk."""
-        self._cfg = None
-        return self.config
+        data = self._load_config_file(self.config_path)
+        self._cfg = Conductor.instance(data)
+        return self._cfg
 
     @property
     def schema_path(self) -> str:
@@ -440,6 +445,7 @@ class ConPilot:
                         augmenting=agent_cfg.augmenting,
                         model=agent_cfg.model,
                         description=agent_cfg.description,
+                        running=agent_cfg.running if isinstance(agent_cfg, Agent) else False,
                     )
                 )
             else:
@@ -473,6 +479,7 @@ class ConPilot:
                                     augmenting=agent_cfg.augmenting,
                                     model=agent_cfg.model,
                                     description=agent_cfg.description,
+                                    running=agent_cfg.running if isinstance(agent_cfg, Agent) else False,
                                 )
                             )
                     else:
@@ -496,12 +503,133 @@ class ConPilot:
                                 augmenting=agent_cfg.augmenting,
                                 model=agent_cfg.model,
                                 description=agent_cfg.description,
+                                running=agent_cfg.running if isinstance(agent_cfg, Agent) else False,
                             )
                         )
 
         return AgentListResponse(
             system_agents=system_agents,
             project_agents=project_agents,
+        )
+
+    def _resolve_agent_role(self, name: str) -> str | None:
+        """Resolve an agent role by role key first, then display name."""
+        cfg = self.config
+        role = name if name in cfg.agents else None
+        if role is None:
+            for r, a in cfg.agents.items():
+                if (a.name or r).lower() == name.lower():
+                    role = r
+                    break
+        return role
+
+    def list_agent_configs(self) -> dict[str, AgentDetailResponse]:
+        """Return runtime agent descriptions from the singleton Conductor instance."""
+        result: dict[str, AgentDetailResponse] = {}
+        for role in self.config.agents:
+            detail = self.get_agent(role)
+            if detail is not None:
+                result[role] = detail
+        return result
+
+    def get_agent_config(self, name: str) -> AgentDetailResponse | None:
+        """Return runtime agent description matched by role key or display name."""
+        role = self._resolve_agent_role(name)
+        if role is None:
+            return None
+        return self.get_agent(role)
+
+    def update_agent_config(self, name: str, changes: dict[str, Any]) -> AgentDetailResponse | None:
+        """Update selected mutable fields for one agent and persist the config file."""
+        role = self._resolve_agent_role(name)
+        if role is None:
+            return None
+
+        mutable_fields = {
+            "name",
+            "active",
+            "sidekick",
+            "augmenting",
+            "model",
+            "description",
+            "instructions",
+        }
+        unknown = [k for k in changes if k not in mutable_fields]
+        if unknown:
+            raise ValueError(f"Unsupported field(s): {', '.join(sorted(unknown))}")
+        if not changes:
+            raise ValueError("No changes provided")
+
+        agent_cfg = self.config.agents[role]
+        if "name" in changes:
+            new_name = changes["name"]
+            if new_name is not None and str(new_name).strip() == "":
+                raise ValueError("Field 'name' cannot be empty")
+
+        for field, value in changes.items():
+            setattr(agent_cfg, field, value)
+
+        config_payload = self.config.model_dump(
+            mode="json", by_alias=True, exclude_none=True
+        )
+        with open(self.config_path, "w") as f:
+            if self.config_path.endswith((".yaml", ".yml")):
+                yaml.safe_dump(config_payload, f, default_flow_style=False, sort_keys=False)
+            else:
+                json.dump(config_payload, f, indent=2)
+
+        self.reload_config()
+        return self.get_agent_config(role)
+
+    def get_agent(self, name: str) -> AgentDetailResponse | None:
+        """
+        Return detailed information for a single agent matched by role key or display name.
+
+        Args:
+            name: The agent's role key (e.g. 'developer') or its display name.
+
+        Returns:
+            AgentDetailResponse if found, None otherwise.
+        """
+        cfg = self.config
+
+        role = self._resolve_agent_role(name)
+
+        if role is None:
+            return None
+
+        agent_cfg = cfg.agents[role]
+        scope = agent_cfg.scope
+
+        # Resolve file existence for system-scoped agents only.
+        if scope == "system":
+            fpath = os.path.join(self.system_agents_dir, f"{role}.agent.md")
+            file_exists = os.path.exists(fpath)
+            file_path = fpath if file_exists else None
+        else:
+            file_exists = False
+            file_path = None
+
+        tasks = cfg.get_tasks_for_agent(role)
+        permissions = agent_cfg.get_permissions().to_list()
+
+        return AgentDetailResponse(
+            role=role,
+            name=self._expand_name(agent_cfg.name or role),
+            scope=scope,
+            active=agent_cfg.active,
+            file_exists=file_exists,
+            file_path=file_path,
+            sidekick=agent_cfg.sidekick,
+            augmenting=agent_cfg.augmenting,
+            model=agent_cfg.model,
+            description=agent_cfg.description,
+            running=agent_cfg.running if isinstance(agent_cfg, Agent) else False,
+            permissions=permissions,
+            tasks=tasks,
+            cron=agent_cfg.cron,
+            instances=agent_cfg.instances,
+            instructions=agent_cfg.instructions,
         )
 
     def _service_config(self) -> tuple[str, int]:
@@ -533,17 +661,13 @@ class ConPilot:
             role_cfg = (
                 active.get("developer") if "developer" in sidekick_roles else None
             )
-            raw = role_cfg.name if role_cfg else conductor_name
+            raw = role_cfg.name if role_cfg and role_cfg.name else (conductor_name or "conductor")
             sidekick_name = self._expand_name(raw, project=project, rank=1)
         elif len(sidekick_roles) == 1:
-            raw = (
-                active[sidekick_roles[0]].name
-                if active[sidekick_roles[0]].name
-                else sidekick_roles[0]
-            )
+            raw = active[sidekick_roles[0]].name or sidekick_roles[0]
             sidekick_name = self._expand_name(raw, project=project, rank=1)
         else:
-            sidekick_name = conductor_name
+            sidekick_name = conductor_name or "conductor"
 
         result: dict[str, str] = {}
         if self.home:
@@ -659,7 +783,8 @@ class ConPilot:
         Expand name template placeholders.
 
         Substitutions:
-          [scope:project] → project name (or removed if no project)
+                    [scope:project] → project name (or removed if no project)
+          [scope]         → scope name (or removed if no project)
           [rank]          → instance number (or removed if no rank)
           Any remaining [placeholder] tokens are stripped.
         """
@@ -671,6 +796,7 @@ class ConPilot:
         name = re.sub(r"\[.*?\]", "", name)
         # Collapse multiple hyphens and strip leading/trailing ones
         name = re.sub(r"-+", "-", name).strip("-")
+        log.debug("Expanded name template '%s' with project='%s' and rank='%s' to '%s'", template, project, rank, name)
         return name
 
     def start_watcher(self) -> int:
@@ -1006,7 +1132,7 @@ class ConPilot:
             and cfg.get("active", False)
             and cfg.get("scope", "system") != "project"
         ]
-
+        app_logger.debug("Ensuring system agents exist for roles", system_roles=system_roles)
         for role in system_roles:
             fname = f"{role}.agent.md"
             dest = os.path.join(self.system_agents_dir, fname)

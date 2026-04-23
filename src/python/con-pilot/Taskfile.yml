@@ -34,18 +34,18 @@ tasks:
   fmt:
     desc: Format source files with ruff.
     cmds:
-      - "uv run ruff format src/ tests/"
+      - "uv run ruff format src/ tests/ --verbose"
 
   lint:
     desc: Check code style and auto-fix safe issues with ruff.
     cmds:
-      - "uv run ruff check --fix src/ tests/"
+      - "uv run ruff check --fix src/ tests/ --verbose"
 
   check:
     desc: Run formatter + linter (no side-effects, exits non-zero on issues).
     cmds:
-      - "uv run ruff format --check src/ tests/"
-      - "uv run ruff check src/ tests/"
+      - "uv run ruff format --check src/ tests/ --verbose"
+      - "uv run ruff check src/ tests/ --verbose"
 
   # ── Tests ───────────────────────────────────────────────────────────────────
 
