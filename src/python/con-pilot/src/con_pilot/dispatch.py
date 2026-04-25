@@ -273,7 +273,9 @@ class PendingDispatcher:
         processed = failed = skipped = 0
 
         if not self._copilot or not getattr(self._copilot, "_conductor_session", None):
-            log.debug("Conductor session unavailable; deferring %d entries", len(entries))
+            log.debug(
+                "Conductor session unavailable; deferring %d entries", len(entries)
+            )
             return {"processed": 0, "failed": 0, "skipped": len(entries)}
 
         for entry in entries:
@@ -382,9 +384,7 @@ class PendingDispatcher:
 
         while not self._stop.is_set():
             try:
-                await asyncio.wait_for(
-                    self._wakeup.wait(), timeout=self._poll_interval
-                )
+                await asyncio.wait_for(self._wakeup.wait(), timeout=self._poll_interval)
             except TimeoutError:
                 pass
             self._wakeup.clear()

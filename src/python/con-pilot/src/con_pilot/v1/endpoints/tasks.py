@@ -209,9 +209,7 @@ def delete_task(name: str, pilot: ConPilot = Depends(get_pilot)) -> None:
     response_model=TaskRunResponse,
     dependencies=[Depends(verify_admin_key)],
 )
-def run_task(
-    name: str, pilot: ConPilot = Depends(get_pilot)
-) -> TaskRunResponse:
+def run_task(name: str, pilot: ConPilot = Depends(get_pilot)) -> TaskRunResponse:
     """Manually queue a task into the cron pending.log."""
     if pilot.get_cron_job(name) is None:
         raise HTTPException(

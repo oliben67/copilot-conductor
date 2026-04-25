@@ -64,14 +64,18 @@ def list_agents(
 
 
 @router.get("/agents/config")
-def list_agent_configs(pilot: ConPilot = Depends(get_pilot)) -> dict[str, AgentDetailResponse]:
+def list_agent_configs(
+    pilot: ConPilot = Depends(get_pilot),
+) -> dict[str, AgentDetailResponse]:
     """Return agent descriptions for all agents from the runtime singleton."""
     pilot = pilot or get_pilot()
     return pilot.list_agent_configs()
 
 
 @router.get("/agents/config/{name}")
-def get_agent_config(name: str, pilot: ConPilot = Depends(get_pilot)) -> AgentDetailResponse:
+def get_agent_config(
+    name: str, pilot: ConPilot = Depends(get_pilot)
+) -> AgentDetailResponse:
     """Return agent description for one agent by role key or display name."""
     pilot = pilot or get_pilot()
     result = pilot.get_agent_config(name)

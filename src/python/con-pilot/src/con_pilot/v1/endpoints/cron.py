@@ -111,9 +111,7 @@ def list_cron_jobs(pilot: ConPilot = Depends(get_pilot)) -> CronJobListResponse:
 
 
 @router.get("/jobs/{name}", response_model=CronJobResponse)
-def get_cron_job(
-    name: str, pilot: ConPilot = Depends(get_pilot)
-) -> CronJobResponse:
+def get_cron_job(name: str, pilot: ConPilot = Depends(get_pilot)) -> CronJobResponse:
     """Return a single task by name."""
     job = pilot.get_cron_job(name)
     if job is None:

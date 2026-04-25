@@ -99,9 +99,7 @@ class TestDevLoadOrGenerateKey:
         # Stable across calls.
         assert pilot._load_or_generate_key() == key
 
-    def test_non_dev_reads_existing_key_file(
-        self, pilot: ConPilot, home: Path
-    ) -> None:
+    def test_non_dev_reads_existing_key_file(self, pilot: ConPilot, home: Path) -> None:
         (home / "key").write_text("preset-admin-key\n")
         assert pilot._load_or_generate_key() == "preset-admin-key"
 

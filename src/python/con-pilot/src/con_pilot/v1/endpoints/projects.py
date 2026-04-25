@@ -45,7 +45,9 @@ def register(body: RegisterRequest, pilot: ConPilot = Depends(get_pilot)) -> dic
 
 
 @router.post("/retire-project")
-def retire_project(body: RetireProjectRequest, pilot: ConPilot = Depends(get_pilot)) -> dict:
+def retire_project(
+    body: RetireProjectRequest, pilot: ConPilot = Depends(get_pilot)
+) -> dict:
     """Retire a project."""
     pilot = pilot or get_pilot()
     pilot.retire_project(body.name)

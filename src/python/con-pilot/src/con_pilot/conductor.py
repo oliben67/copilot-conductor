@@ -1821,15 +1821,11 @@ class ConPilot:
         role = task.agent
         role_cfg = cfg.get_agent_dict(role)
         if not role_cfg:
-            log.warning(
-                "Skipping task %s: unknown agent role %s", task.name, role
-            )
+            log.warning("Skipping task %s: unknown agent role %s", task.name, role)
             return False
 
         if not role_cfg.get("active", role == "conductor"):
-            log.info(
-                "Skipping task %s: agent role %s is inactive", task.name, role
-            )
+            log.info("Skipping task %s: agent role %s is inactive", task.name, role)
             return False
 
         role_project: str | None = None
@@ -2026,10 +2022,7 @@ class ConPilot:
             ``scheduled``, ``registered``, ``next_run_time`` and ``job_id``.
         :rtype: `list[dict[str, Any]]`
         """
-        return [
-            self._describe_cron_job(task.name) or {}
-            for task in self.config.tasks
-        ]
+        return [self._describe_cron_job(task.name) or {} for task in self.config.tasks]
 
     def get_cron_job(self, name: str) -> dict[str, Any] | None:
         """
@@ -2087,9 +2080,7 @@ class ConPilot:
 
     def _persist_config(self) -> None:
         """Write the current in-memory config back to ``self.config_path``."""
-        payload = self.config.model_dump(
-            mode="json", by_alias=True, exclude_none=True
-        )
+        payload = self.config.model_dump(mode="json", by_alias=True, exclude_none=True)
         with open(self.config_path, "w") as f:
             if self.config_path.endswith((".yaml", ".yml")):
                 yaml.safe_dump(payload, f, default_flow_style=False, sort_keys=False)
@@ -2186,9 +2177,7 @@ class ConPilot:
             raise ValueError("No changes provided")
 
         cfg = self.config
-        idx = next(
-            (i for i, t in enumerate(cfg.tasks) if t.name == name), None
-        )
+        idx = next((i for i, t in enumerate(cfg.tasks) if t.name == name), None)
         if idx is None:
             return None
 
