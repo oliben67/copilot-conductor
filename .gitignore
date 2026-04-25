@@ -49,3 +49,10 @@ src/vscode/conduct-lectern/.task/
 src/vscode/conduct-lectern/package-lock.json
 
 .copilot/
+
+# dev only
+.dev-artefacts/
+
+# SQLite databases (e.g. from tests or local development).
+# These may contain sensitive data and are not needed in version control.
+*.sqlite*
