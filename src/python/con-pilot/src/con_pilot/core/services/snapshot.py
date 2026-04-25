@@ -76,21 +76,41 @@ class SnapshotService:
 
     @property
     def instructions_dir(self) -> str:
-        """Path to CONDUCTOR_HOME/.instructions/"""
+        """
+        Return the path to ``$CONDUCTOR_HOME/.instructions/``.
+
+        :return: absolute path to the snapshot instructions directory.
+        :rtype: `str`
+        """
         return os.path.join(self._paths.home, self.INSTRUCTIONS_DIR)
 
     @property
     def index_path(self) -> str:
-        """Path to CONDUCTOR_HOME/.instructions/snapshot-index.json"""
+        """
+        Return the path to ``$CONDUCTOR_HOME/.instructions/snapshot-index.json``.
+
+        :return: absolute path to the snapshot index file.
+        :rtype: `str`
+        """
         return os.path.join(self.instructions_dir, self.INDEX_FILE)
 
     @property
     def github_dir(self) -> str:
-        """Path to CONDUCTOR_HOME/.github/"""
+        """
+        Return the path to ``$CONDUCTOR_HOME/.github/``.
+
+        :return: absolute path to the monitored ``.github`` directory.
+        :rtype: `str`
+        """
         return self._paths.github_dir
 
     def ensure_instructions_dir(self) -> None:
-        """Create .instructions directory if it doesn't exist."""
+        """
+        Create the ``.instructions`` directory when it does not already exist.
+
+        :return: None
+        :rtype: `None`
+        """
         Path(self.instructions_dir).mkdir(parents=True, exist_ok=True)
 
     def _load_index(self) -> SnapshotIndex:
@@ -134,10 +154,18 @@ class SnapshotService:
 
     def get_file_hashes(self) -> dict[str, str]:
         """
-        Compute hashes for all monitored files in .github directory.
+        Compute MD5 hashes for every monitored file under ``.github``.
 
-        Returns:
-            Dictionary mapping relative file paths to their MD5 hashes.
+        Example:
+            hashes = service.get_file_hashes()
+
+        Note:
+            Files are filtered through ``SNAPSHOT_PATTERNS``; unreadable files
+            are logged and skipped.
+
+        :return: a mapping of relative path (under ``.github``) to MD5 hex
+            digest.
+        :rtype: `dict[str, str]`
         """
         hashes: dict[str, str] = {}
         github_dir = self.github_dir
@@ -160,10 +188,15 @@ class SnapshotService:
 
     def detect_changes(self) -> tuple[bool, dict[str, str]]:
         """
-        Detect if monitored files have changed since last snapshot.
+        Determine whether monitored files have changed since the last snapshot.
 
-        Returns:
-            Tuple of (has_changes, current_hashes).
+        Example:
+            changed, hashes = service.detect_changes()
+
+        :return: a tuple ``(has_changes, current_hashes)`` where
+            ``has_changes`` is ``True`` when the current hashes differ from
+            the index baseline.
+        :rtype: `tuple[bool, dict[str, str]]`
         """
         index = self._load_index()
         current_hashes = self.get_file_hashes()
@@ -186,17 +219,22 @@ class SnapshotService:
 
     def create_snapshot(self, automatic: bool = False) -> SnapshotMetadata:
         """
-        Create a tar.gz snapshot of the .github directory.
+        Create a ``tar.gz`` archive of the monitored ``.github`` directory.
 
-        Parameters
-        ----------
-        automatic:
-            If True, use automatic-snapshot prefix in filename.
+        Example:
+            meta = service.create_snapshot()
 
-        Returns
-        -------
-        SnapshotMetadata:
-            Metadata about the created snapshot.
+        Note:
+            Acquires the service lock for the duration of the archive write so
+            concurrent ``check_and_snapshot`` calls cannot race.
+
+        :param automatic: when ``True`` the filename is prefixed with
+            ``automatic-snapshot`` instead of ``snapshot``.
+        :type automatic: `bool`
+        :return: metadata describing the new snapshot.
+        :rtype: `SnapshotMetadata`
+        :raises FileNotFoundError: when the monitored ``.github`` directory
+            does not exist.
         """
         with self._lock:
             self.ensure_instructions_dir()
@@ -251,26 +289,53 @@ class SnapshotService:
             return metadata
 
     def list_snapshots(self) -> list[SnapshotMetadata]:
-        """List all stored snapshots."""
+        """
+        Return metadata for every stored snapshot.
+
+        :return: snapshots in the order recorded in the index.
+        :rtype: `list[SnapshotMetadata]`
+        """
         return self._load_index().snapshots
 
     def get_snapshot(self, filename: str) -> SnapshotMetadata | None:
-        """Get metadata for a specific snapshot."""
+        """
+        Return metadata for a snapshot identified by filename.
+
+        :param filename: snapshot filename as listed by :meth:`list_snapshots`.
+        :type filename: `str`
+        :return: matching metadata, or ``None`` when no entry is found.
+        :rtype: `SnapshotMetadata | None`
+        """
         for snap in self._load_index().snapshots:
             if snap.filename == filename:
                 return snap
         return None
 
     def get_snapshot_path(self, filename: str) -> str | None:
-        """Get full path to a snapshot file."""
+        """
+        Return the absolute path of a snapshot archive when it exists on disk.
+
+        :param filename: snapshot filename.
+        :type filename: `str`
+        :return: absolute path to the file, or ``None`` when the file is
+            absent from the instructions directory.
+        :rtype: `str | None`
+        """
         path = os.path.join(self.instructions_dir, filename)
         return path if os.path.exists(path) else None
 
     def delete_snapshot(self, filename: str) -> bool:
         """
-        Delete a snapshot file and remove from index.
+        Delete a snapshot file and remove its entry from the index.
 
-        Returns True if deleted, False if not found.
+        Example:
+            service.delete_snapshot("snapshot-20260101-000000.github.tar.gz")
+
+        :param filename: snapshot filename to delete.
+        :type filename: `str`
+        :return: ``True`` when an entry was removed, ``False`` when no
+            snapshot with that filename was indexed.
+        :rtype: `bool`
         """
         with self._lock:
             index = self._load_index()
@@ -289,9 +354,16 @@ class SnapshotService:
 
     def check_and_snapshot(self) -> SnapshotMetadata | None:
         """
-        Check for changes and create automatic snapshot if needed.
+        Create an automatic snapshot when changes are detected.
 
-        Returns SnapshotMetadata if a snapshot was created, None otherwise.
+        Example:
+            meta = service.check_and_snapshot()
+            if meta:
+                log.info("created %s", meta.filename)
+
+        :return: metadata for the new snapshot, or ``None`` when no changes
+            were detected.
+        :rtype: `SnapshotMetadata | None`
         """
         has_changes, _ = self.detect_changes()
         if has_changes:
@@ -300,12 +372,18 @@ class SnapshotService:
 
     def start_watcher(self, interval: int = 60) -> None:
         """
-        Start background watcher for automatic snapshots.
+        Start a background thread that periodically calls :meth:`check_and_snapshot`.
 
-        Parameters
-        ----------
-        interval:
-            Check interval in seconds (default: 60).
+        Example:
+            service.start_watcher(interval=120)
+
+        Note:
+            Idempotent: a no-op when a watcher thread is already running.
+
+        :param interval: number of seconds to wait between checks.
+        :type interval: `int`
+        :return: None
+        :rtype: `None`
         """
         if self._watcher_running:
             log.warning("Snapshot watcher already running")
@@ -329,7 +407,15 @@ class SnapshotService:
         self._watcher_thread.start()
 
     def stop_watcher(self) -> None:
-        """Stop the background watcher."""
+        """
+        Stop the background watcher and join its thread.
+
+        Note:
+            Waits up to five seconds for the worker thread to exit.
+
+        :return: None
+        :rtype: `None`
+        """
         self._watcher_running = False
         if self._watcher_thread:
             self._watcher_thread.join(timeout=5)
@@ -337,5 +423,10 @@ class SnapshotService:
 
     @property
     def versions(self) -> list[SnapshotMetadata]:
-        """Alias for list_snapshots() for API consistency."""
+        """
+        Alias of :meth:`list_snapshots` provided for API symmetry.
+
+        :return: snapshots from the index.
+        :rtype: `list[SnapshotMetadata]`
+        """
         return self.list_snapshots()

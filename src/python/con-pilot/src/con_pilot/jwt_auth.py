@@ -17,14 +17,16 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 import jwt
+
 from con_pilot.logger import app_logger
 from con_pilot.paths import resolve_key_file
 
 log = app_logger.bind(module=__name__)
 
 _TOKEN_EXPIRY_SECONDS = 3600  # 1 hour
+_ALGORITHM = "HS256"
 
-_jwk: jwt.jwk.AbstractJWKBase | None = None
+_key_bytes: bytes | None = None
 
 
 def _load_or_create_key(key_file: str) -> bytes:
@@ -45,24 +47,23 @@ def _load_or_create_key(key_file: str) -> bytes:
     return encoded
 
 
-def get_jwk(key_file: str | None = None) -> jwt.jwk.AbstractJWKBase:
-    """Return the cached OctetJWK, initialising it on first call."""
-    global _jwk  # noqa: PLW0603
-    if _jwk is not None:
-        return _jwk
+def get_jwk(key_file: str | None = None) -> bytes:
+    """Return the cached signing key bytes, initialising it on first call."""
+    global _key_bytes
+    if _key_bytes is not None:
+        return _key_bytes
 
     # Priority 1: explicit env var
     secret_env = os.environ.get("CON_PILOT_JWT_SECRET")
     if secret_env:
-        key_bytes = secret_env.encode()
+        _key_bytes = secret_env.encode()
     else:
         # Priority 2/3: key file (load or create)
         if key_file is None:
             key_file = resolve_key_file(os.environ.get("CONDUCTOR_HOME", ""))
-        key_bytes = _load_or_create_key(key_file)
+        _key_bytes = _load_or_create_key(key_file)
 
-    _jwk = jwt.jwk.OctetJWK(key_bytes)
-    return _jwk
+    return _key_bytes
 
 
 def issue_token(subject: str, extra: dict | None = None) -> tuple[str, int]:
@@ -82,9 +83,7 @@ def issue_token(subject: str, extra: dict | None = None) -> tuple[str, int]:
     if extra:
         payload.update(extra)
 
-    jwk = get_jwk()
-    j = jwt.JWT()
-    token = j.encode(payload, jwk, alg="HS256")
+    token = jwt.encode(payload, get_jwk(), algorithm=_ALGORITHM)
     return token, _TOKEN_EXPIRY_SECONDS
 
 
@@ -94,11 +93,9 @@ def verify_token(token: str) -> dict:
 
     Raises
     ------
-    jwt.exceptions.JWTDecodeError / JWTExpiredError on invalid/expired tokens.
+    jwt.InvalidTokenError (or subclasses) on invalid/expired tokens.
     """
-    jwk = get_jwk()
-    j = jwt.JWT()
-    return j.decode(token, jwk)
+    return jwt.decode(token, get_jwk(), algorithms=[_ALGORITHM])
 
 
 def check_credentials(username: str, password: str) -> bool:

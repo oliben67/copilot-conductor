@@ -55,7 +55,7 @@ def resolve_github_token(*, required: bool = True) -> GitHubToken | None:
         TokenConflictError: If multiple tokens are set with different values.
         TokenNotFoundError: If required=True and no token is found.
     """
-    global _cached_token  # noqa: PLW0603
+    global _cached_token
 
     if _cached_token is not None:
         return _cached_token
@@ -108,5 +108,5 @@ def get_github_token() -> GitHubToken:
 
 def clear_token_cache() -> None:
     """Clear the cached token (useful for testing)."""
-    global _cached_token  # noqa: PLW0603
+    global _cached_token
     _cached_token = None

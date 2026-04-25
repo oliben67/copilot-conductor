@@ -1,14 +1,11 @@
 """Validation endpoints."""
 
-from typing import TYPE_CHECKING
-
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from con_pilot.core.models import ValidationResult
 from con_pilot.core.schemas import ValidateRequest
 
-if TYPE_CHECKING:
-    from con_pilot.conductor import ConPilot
+from con_pilot.conductor import ConPilot
 
 router = APIRouter(tags=["validation"])
 
@@ -22,7 +19,7 @@ def get_pilot() -> ConPilot:
 
 @router.get("/validate")
 def validate_get(
-    config_path: str | None = None, pilot: ConPilot | None = None
+    config_path: str | None = None, pilot: ConPilot = Depends(get_pilot)
 ) -> ValidationResult:
     """Validate conductor.json against the schema (GET)."""
     pilot = pilot or get_pilot()
@@ -31,7 +28,7 @@ def validate_get(
 
 @router.post("/validate")
 def validate_post(
-    body: ValidateRequest | None = None, pilot: ConPilot | None = None
+    body: ValidateRequest | None = None, pilot: ConPilot = Depends(get_pilot)
 ) -> ValidationResult:
     """Validate conductor.json against the schema (POST)."""
     pilot = pilot or get_pilot()

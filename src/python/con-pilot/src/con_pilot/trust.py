@@ -40,7 +40,7 @@ class TrustRegistry:
             try:
                 with open(self._paths.trust_file) as f:
                     trust.update(json.load(f))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 log.warning("Failed to load trust file: %s", self._paths.trust_file)
         # Ensure conductor entry is always correct
         trust["conductor"] = self._paths.home

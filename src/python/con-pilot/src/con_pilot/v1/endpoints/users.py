@@ -15,6 +15,14 @@ log = app_logger.bind(module=__name__)
 
 router = APIRouter(tags=["admin"])
 
+# Dev builds (CONDUCTOR_ENV=DEV) accept this null GUID instead of a generated key.
+_DEV_NULL_KEY = b"00000000-0000-0000-0000-000000000000"
+
+
+def _is_dev_build() -> bool:
+    return os.environ.get("CONDUCTOR_ENV") == "DEV"
+
+
 # ---------------------------------------------------------------------------
 # Install-key authentication
 # ---------------------------------------------------------------------------
@@ -23,7 +31,13 @@ _install_key_header = APIKeyHeader(name="X-Install-Key", auto_error=False)
 
 
 def _read_install_key() -> bytes:
-    """Return the raw bytes of the install-time key file."""
+    """Return the raw bytes of the install-time key file.
+
+    Dev builds short-circuit to the null GUID and never touch the on-disk
+    key file (which may carry a stale uuid4 written by the legacy installer).
+    """
+    if _is_dev_build():
+        return _DEV_NULL_KEY
     key_file = resolve_key_file(os.environ.get("CONDUCTOR_HOME", ""))
     if not os.path.exists(key_file):
         raise HTTPException(

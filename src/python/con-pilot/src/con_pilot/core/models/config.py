@@ -3,13 +3,10 @@
 import re
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, ClassVar, Literal, Self
+from typing import ClassVar, Literal, Self
 
 from croniter import croniter
 from pydantic import BaseModel, Field, field_validator
-
-if TYPE_CHECKING:
-    pass
 
 from con_pilot.exceptions import AgentNamingPatternException
 
@@ -87,12 +84,25 @@ class Permission(StrEnum):
 
     @classmethod
     def all_values(cls) -> list[str]:
-        """Return all permission values as strings."""
+        """
+        Return every permission as its raw string value.
+
+        :return: list of permission identifiers in declaration order.
+        :rtype: `list[str]`
+        """
         return [p.value for p in cls]
 
     @classmethod
     def from_string(cls, value: str) -> "Permission":
-        """Convert a string to a Permission enum."""
+        """
+        Resolve a string to a :class:`Permission` member.
+
+        :param value: permission identifier (e.g. ``"workspace_read"``).
+        :type value: `str`
+        :return: matching :class:`Permission` member.
+        :rtype: `Permission`
+        :raises ValueError: when no member matches ``value``.
+        """
         try:
             return cls(value)
         except ValueError:
@@ -147,7 +157,15 @@ class CronConfig(BaseModel):
     @field_validator("expression")
     @classmethod
     def validate_cron_expression(cls, v: str) -> str:
-        """Validate the cron expression using croniter."""
+        """
+        Validate a cron expression with ``croniter``.
+
+        :param v: cron expression to validate.
+        :type v: `str`
+        :return: the validated expression unchanged.
+        :rtype: `str`
+        :raises ValueError: when ``v`` is not a valid cron expression.
+        """
         if not croniter.is_valid(v):
             raise ValueError(f"Invalid cron expression: {v}")
         return v
@@ -198,7 +216,15 @@ class TaskConfig(BaseModel):
     @field_validator("cron")
     @classmethod
     def validate_cron_expression(cls, v: str | None) -> str | None:
-        """Validate the cron expression using croniter if provided."""
+        """
+        Validate an optional cron expression with ``croniter``.
+
+        :param v: cron expression, or ``None`` for manually triggered tasks.
+        :type v: `str | None`
+        :return: the validated value (``None`` is returned unchanged).
+        :rtype: `str | None`
+        :raises ValueError: when ``v`` is provided but invalid.
+        """
         if v is not None and not croniter.is_valid(v):
             raise ValueError(f"Invalid cron expression: {v}")
         return v
@@ -225,20 +251,40 @@ class InstancePolicy(BaseModel):
 
     @property
     def effective_max(self) -> int:
-        """Return max if set, otherwise min."""
+        """
+        Return the upper instance bound, falling back to :attr:`min`.
+
+        :return: ``max`` when set, otherwise ``min``.
+        :rtype: `int`
+        """
         return self.max if self.max is not None else self.min
 
     def creation_range(self) -> range:
-        """Return range of instance numbers that must be created (1 to min inclusive)."""
+        """
+        Return the inclusive instance numbers that must be created.
+
+        :return: ``range(1, min + 1)``.
+        :rtype: `range`
+        """
         return range(1, self.min + 1)
 
     def capacity_range(self) -> range:
-        """Return range of all possible instance slots (1 to max inclusive)."""
+        """
+        Return the inclusive instance numbers permitted by the policy.
+
+        :return: ``range(1, effective_max + 1)``.
+        :rtype: `range`
+        """
         return range(1, self.effective_max + 1)
 
     @property
     def is_multi_instance(self) -> bool:
-        """True if this policy allows more than one instance."""
+        """
+        Indicate whether the policy permits more than one instance.
+
+        :return: ``True`` when ``effective_max`` is greater than one.
+        :rtype: `bool`
+        """
         return self.effective_max > 1
 
     def __iter__(self):
@@ -542,7 +588,7 @@ class AgentPermissions(BaseModel):
             if getattr(self, field_name) is True
         ]
 
-    def to_enum_list(self) -> list["Permission"]:
+    def to_enum_list(self) -> list[Permission]:
         """Return list of enabled permissions as Permission enum values."""
         return [Permission(name) for name in self.to_list()]
 

@@ -23,11 +23,11 @@ from con_pilot.core.models import (
 from con_pilot.exceptions import AgentNamingPatternException
 
 __all__ = [
+    "Agent",
     "AgentConfig",
     "AgentDetailResponse",
     "AgentInfo",
     "AgentListResponse",
-    "Agent",
     "AgentNamingPatternException",
     "Conductor",
     "ConductorConfig",

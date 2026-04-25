@@ -1,11 +1,8 @@
 """Sync and cron endpoints."""
 
-from typing import TYPE_CHECKING
+from fastapi import APIRouter, Depends
 
-from fastapi import APIRouter
-
-if TYPE_CHECKING:
-    from con_pilot.conductor import ConPilot
+from con_pilot.conductor import ConPilot
 
 router = APIRouter(tags=["sync"])
 
@@ -18,7 +15,7 @@ def get_pilot() -> ConPilot:
 
 
 @router.post("/sync")
-def sync(pilot: ConPilot | None = None) -> dict:
+def sync(pilot: ConPilot = Depends(get_pilot)) -> dict:
     """Run a full sync cycle."""
     pilot = pilot or get_pilot()
     pilot.sync()
@@ -26,7 +23,7 @@ def sync(pilot: ConPilot | None = None) -> dict:
 
 
 @router.post("/cron")
-def cron(pilot: ConPilot | None = None) -> dict:
+def cron(pilot: ConPilot = Depends(get_pilot)) -> dict:
     """Dispatch cron jobs only."""
     pilot = pilot or get_pilot()
     pilot.cron()

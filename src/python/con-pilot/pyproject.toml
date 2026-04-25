@@ -5,12 +5,15 @@ description = "Conductor pilot — agent sync and scheduling library for the con
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "aiofiles>=25.1.0",
+    "apscheduler>=3.11",
     "croniter>=3.0",
     "fastapi>=0.110",
     "github-copilot-sdk>=0.2.2",
     "jsonschema>=4.20",
     "pyjwt>=2.8",
     "pyyaml>=6.0",
+    "sqlalchemy>=2.0",
     "structlog>=25.5.0",
     "uvicorn[standard]>=0.29",
 ]
@@ -20,6 +23,7 @@ con-pilot = "con_pilot.main:main"
 
 [dependency-groups]
 dev = [
+    "debugpy>=1.8.20",
     "jupyter>=1.1.1",
     "pytest>=8.0",
     "ruff>=0.4",

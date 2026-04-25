@@ -20,6 +20,7 @@ Usage
 """
 
 import argparse
+import os
 
 from con_pilot.logger import setup_file_logging
 
@@ -28,8 +29,48 @@ def _setup_logging() -> None:
     setup_file_logging()
 
 
+def _maybe_start_debugpy() -> None:
+    """Start a debugpy listener for dev builds when ``CONDUCTOR_DEBUGPY`` is set.
+
+    Activated only when both:
+      * ``CONDUCTOR_ENV=DEV``
+      * ``CONDUCTOR_DEBUGPY`` is set to ``1``/``true`` (case-insensitive).
+
+    Listens on ``CONDUCTOR_DEBUGPY_HOST`` (default ``127.0.0.1``) and port
+    ``CONDUCTOR_DEBUGPY_PORT`` (default ``5678``). When ``CONDUCTOR_DEBUGPY_WAIT``
+    is truthy, blocks until a VS Code debug client attaches.
+    """
+    if os.environ.get("CONDUCTOR_ENV") != "DEV":
+        return
+    if os.environ.get("CONDUCTOR_DEBUGPY", "").strip().lower() not in ("1", "true", "yes"):
+        return
+    try:
+        import debugpy  # type: ignore[import-not-found]
+    except ImportError:
+        return
+
+    host = os.environ.get("CONDUCTOR_DEBUGPY_HOST", "127.0.0.1")
+    try:
+        port = int(os.environ.get("CONDUCTOR_DEBUGPY_PORT", "5678"))
+    except ValueError:
+        port = 5678
+
+    try:
+        debugpy.listen((host, port))
+    except Exception as exc:  # already listening / port busy
+        print(f"[con-pilot] debugpy listen failed on {host}:{port}: {exc}")
+        return
+
+    print(f"[con-pilot] debugpy listening on {host}:{port}")
+    if os.environ.get("CONDUCTOR_DEBUGPY_WAIT", "").strip().lower() in ("1", "true", "yes"):
+        print("[con-pilot] waiting for VS Code debugger to attach…")
+        debugpy.wait_for_client()
+        print("[con-pilot] debugger attached.")
+
+
 def main() -> None:
     _setup_logging()
+    _maybe_start_debugpy()
 
     parser = argparse.ArgumentParser(
         prog="con-pilot",
@@ -159,7 +200,7 @@ def main() -> None:
         parser.print_help()
         raise SystemExit(0)
 
-    from con_pilot.conductor import ConPilot  # noqa: PLC0415
+    from con_pilot.conductor import ConPilot
 
     pilot = ConPilot()
 
@@ -178,7 +219,7 @@ def main() -> None:
     elif args.command == "list-agents":
         result = pilot.list_agents(project=args.project)
         if args.json:
-            import json  # noqa: PLC0415
+            import json
 
             print(json.dumps(result.model_dump(), indent=2))
         else:
@@ -215,7 +256,7 @@ def main() -> None:
     elif args.command == "validate":
         result = pilot.validate(config_path=args.file)
         if args.json:
-            import json  # noqa: PLC0415
+            import json
 
             print(json.dumps(result.model_dump(), indent=2))
         else:

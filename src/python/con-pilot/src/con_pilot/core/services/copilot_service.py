@@ -13,34 +13,16 @@ are spawned by the conductor using the tools provided here.
 """
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from typing import Any, Callable
 
+from con_pilot.exceptions import PermissionHandlerMissingException
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
-    from con_pilot.conductor import ConPilot
+from con_pilot.conductor import ConPilot
 
-try:
-    from copilot import CopilotClient, SubprocessConfig, define_tool
-    from copilot.generated.session_events import (
-        PermissionRequest,
-        SessionEventType,
-    )
-    from copilot.session import PermissionHandler, PermissionRequestResult
-
-    HAS_COPILOT_SDK = True
-    COPILOT_SDK_IMPORT_ERROR: str | None = None
-except Exception as exc:  # pragma: no cover - depends on local SDK/runtime mismatch.
-    CopilotClient = Any  # type: ignore[assignment]
-    SubprocessConfig = Any  # type: ignore[assignment]
-    define_tool = None  # type: ignore[assignment]
-    PermissionRequest = object  # type: ignore[assignment]
-    SessionEventType = object  # type: ignore[assignment]
-    PermissionHandler = None  # type: ignore[assignment]
-    PermissionRequestResult = None  # type: ignore[assignment]
-
-    HAS_COPILOT_SDK = False
-    COPILOT_SDK_IMPORT_ERROR = f"{exc.__class__.__name__}: {exc}"
+from copilot import CopilotClient, SubprocessConfig, define_tool
+from copilot.generated.session_events import PermissionRequest
+from copilot.session import PermissionHandler, PermissionRequestResult
 
 from con_pilot.core.models import Agent, AgentConfig, AgentPermissions
 from con_pilot.logger import app_logger
@@ -92,7 +74,7 @@ class CopilotAgentService:
         conductor_session: The active conductor agent session.
     """
 
-    def __init__(self, pilot: "ConPilot") -> None:
+    def __init__(self, pilot: ConPilot) -> None:
         """Initialize the Copilot agent service.
 
         Args:
@@ -104,30 +86,23 @@ class CopilotAgentService:
         self._active_sessions: dict[str, Any] = {}  # role -> session
         Agent.set_running_checker(self._is_agent_running)
 
-    @property
-    def is_available(self) -> bool:
-        """Check if the Copilot SDK is available."""
-        return HAS_COPILOT_SDK
-
     async def start(self) -> None:
-        """Start the Copilot client and create the conductor agent.
-
-        This method:
-        1. Initializes the CopilotClient
-        2. Creates the conductor agent session with proper permissions
-        3. Registers tools for agent management
-        4. Sends initial context about system agents
-
-        Raises:
-            RuntimeError: If the Copilot SDK is not available.
         """
-        if not HAS_COPILOT_SDK:
-            log.warning(
-                "Copilot SDK not available. Agent management via SDK disabled. (%s)",
-                COPILOT_SDK_IMPORT_ERROR,
-            )
-            return
+        Start the Copilot client and bootstrap the conductor session.
 
+        Example:
+            await service.start()
+
+        Note:
+            Initialises a :class:`CopilotClient` subprocess, opens a streaming
+            conductor session with the configured permissions, registers the
+            agent-management tools and primes the conductor with the current
+            system-agent context.
+
+        :return: None
+        :rtype: `None`
+        :raises RuntimeError: when the Copilot SDK is not available.
+        """
         log.info("Starting Copilot agent service...")
         log.debug("Copilot service start: loading conductor configuration")
 
@@ -168,7 +143,20 @@ class CopilotAgentService:
         log.info("Copilot agent service started. Conductor session active.")
 
     async def stop(self) -> None:
-        """Stop the Copilot client and clean up sessions."""
+        """
+        Disconnect every Copilot session and stop the SDK client.
+
+        Example:
+            await service.stop()
+
+        Note:
+            Idempotent: returns early when no client is running. Errors raised
+            while disconnecting individual sessions are logged but do not
+            interrupt the shutdown sequence.
+
+        :return: None
+        :rtype: `None`
+        """
         if not self._client:
             return
 
@@ -179,7 +167,7 @@ class CopilotAgentService:
             try:
                 await session.disconnect()
                 log.debug("Disconnected session for %s", role)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.warning("Error disconnecting session for %s: %s", role, e)
 
         if self._conductor_session:
@@ -241,7 +229,9 @@ class CopilotAgentService:
                 on_permission_request=permission_handler,
                 streaming=True,
             )
-        log.debug("Conductor session created", session_id=f"conductor-{conductor_cfg.name}")
+        log.debug(
+            "Conductor session created", session_id=f"conductor-{conductor_cfg.name}"
+        )
 
         log.info(
             "Conductor session created: %s (model: %s)",
@@ -420,7 +410,7 @@ class CopilotAgentService:
 
             return f"Successfully spawned agent '{cfg.name}' for role '{role}'"
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             log.error("Failed to spawn agent %s: %s", role, e)
             return f"Failed to spawn agent '{role}': {e}"
 
@@ -470,7 +460,9 @@ Your allowed operations:
 - Do not exceed your permission scope
 """
 
-    def _create_permission_handler(self, permissions: AgentPermissions):
+    def _create_permission_handler(
+        self, permissions: AgentPermissions
+    ) -> Callable[[PermissionRequest, dict], PermissionRequestResult]:
         """Create a permission handler based on agent permissions.
 
         Args:
@@ -480,11 +472,16 @@ Your allowed operations:
             A permission handler function for the SDK.
         """
         if not PermissionRequestResult or not PermissionRequest:
-            return PermissionHandler.approve_all if PermissionHandler else None
+            if not PermissionHandler:
+                raise PermissionHandlerMissingException(
+                    "Copilot SDK permissions API not available"
+                )
+
+            return PermissionHandler.approve_all
 
         def on_permission_request(
-            request: "PermissionRequest", invocation: dict
-        ) -> "PermissionRequestResult":
+            request: PermissionRequest, invocation: dict
+        ) -> PermissionRequestResult:
             """Handle permission requests based on agent configuration."""
             kind = (
                 request.kind.value
@@ -494,7 +491,7 @@ Your allowed operations:
 
             # Map request kinds to permission checks
             if kind == "shell":
-                if not permissions.terminal_execute:  # noqa: SIM102
+                if not permissions.terminal_execute:
                     return PermissionRequestResult(kind="denied-by-rules")
                 # Check for destructive commands
                 cmd = getattr(request, "full_command_text", "") or ""
@@ -584,13 +581,21 @@ for task delegation.
             log.warning("Conductor did not respond to initialization within timeout")
 
     async def send_to_conductor(self, message: str) -> str | None:
-        """Send a message to the conductor and wait for response.
+        """
+        Send a message to the conductor session and await its response.
 
-        Args:
-            message: The message to send.
+        Example:
+            response = await service.send_to_conductor("status")
 
-        Returns:
-            The conductor's response, or None if unavailable.
+        Note:
+            Listens for ``assistant.message`` events until ``session.idle``
+            is observed or 60 s elapse, whichever comes first.
+
+        :param message: prompt text to deliver to the conductor session.
+        :type message: `str`
+        :return: the concatenated assistant text, or ``None`` when no
+            conductor session is attached or no response was captured.
+        :rtype: `str | None`
         """
         if not self._conductor_session:
             return None

@@ -1,7 +1,8 @@
 """Configuration version management endpoints."""
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from con_pilot.conductor import ConPilot
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -12,13 +13,10 @@ from con_pilot.core.services.config_store import (
     VersionNotFoundError,
 )
 
-if TYPE_CHECKING:
-    from con_pilot.conductor import ConPilot
-
 router = APIRouter(prefix="/config", tags=["config"])
 
 
-def get_pilot() -> "ConPilot":
+def get_pilot() -> ConPilot:
     """Dependency to get the ConPilot instance."""
     from con_pilot.v1.api import get_pilot as _get_pilot
 
@@ -99,7 +97,7 @@ class ConfigErrorResponse(BaseModel):
 
 
 @router.get("", response_model=ConfigListResponse)
-def list_configs(pilot: ConPilot | None = None) -> ConfigListResponse:
+def list_configs(pilot: ConPilot = Depends(get_pilot)) -> ConfigListResponse:
     """
     List all stored configuration versions.
 
@@ -113,7 +111,7 @@ def list_configs(pilot: ConPilot | None = None) -> ConfigListResponse:
     try:
         if pilot.config.version:
             active_version = pilot.config.version.number
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
     return ConfigListResponse(
@@ -124,7 +122,7 @@ def list_configs(pilot: ConPilot | None = None) -> ConfigListResponse:
 
 
 @router.get("/{version}", response_model=dict)
-def get_config(version: str, pilot: ConPilot | None = None) -> dict:
+def get_config(version: str, pilot: ConPilot = Depends(get_pilot)) -> dict:
     """
     Get a specific configuration version.
 
@@ -146,7 +144,7 @@ def get_config(version: str, pilot: ConPilot | None = None) -> dict:
 @router.post("/diff", response_model=ConfigDiffResponse)
 def diff_configs(
     body: ConfigDiffRequest,
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> ConfigDiffResponse:
     """
     Generate a unified diff between two configuration versions.
@@ -178,7 +176,7 @@ def diff_configs(
 def diff_with_active(
     version: str,
     context_lines: int = 3,
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> ConfigDiffResponse:
     """
     Generate a diff between a stored version and the active configuration.
@@ -210,7 +208,7 @@ def diff_with_active(
 )
 def create_config(
     body: ConfigCreateRequest,
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> ConfigCreateResponse:
     """
     Create a new configuration version.
@@ -291,7 +289,7 @@ def create_config(
 
 def verify_admin_key(
     x_admin_key: str | None = Header(None),
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> ConPilot:
     """Verify the admin key header matches the system key."""
     pilot = pilot or get_pilot()
@@ -319,7 +317,7 @@ def verify_admin_key(
 def update_config(
     version: str,
     body: ConfigCreateRequest,
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> ConfigCreateResponse:
     """
     Update an existing configuration version (requires admin key).
@@ -399,7 +397,7 @@ def update_config(
 def activate_config(
     version: str,
     body: ConfigActivateRequest | None = None,
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> ConfigActivateResponse:
     """
     Activate a stored configuration version (requires admin key).
@@ -430,7 +428,7 @@ def activate_config(
         try:
             pilot.sync()
             message += " and service resynced"
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             message += f" (sync failed: {e})"
 
     return ConfigActivateResponse(
@@ -445,7 +443,7 @@ def activate_config(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(verify_admin_key)],
 )
-def delete_config(version: str, pilot: ConPilot | None = None) -> None:
+def delete_config(version: str, pilot: ConPilot = Depends(get_pilot)) -> None:
     """
     Delete a stored configuration version (requires admin key).
 
@@ -461,7 +459,7 @@ def delete_config(version: str, pilot: ConPilot | None = None) -> None:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot delete the currently active configuration version",
             )
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
     try:

@@ -190,7 +190,9 @@ class TestGetAgent:
         assert result.role == "developer"
         assert result.running is False
 
-    def test_update_agent_config_persists_to_file(self, pilot: ConPilot, home: Path) -> None:
+    def test_update_agent_config_persists_to_file(
+        self, pilot: ConPilot, home: Path
+    ) -> None:
         updated = pilot.update_agent_config(
             "developer",
             {"active": False, "model": "gpt-test", "description": "Updated desc"},
@@ -205,7 +207,9 @@ class TestGetAgent:
         assert config_data["agent"]["developer"]["model"] == "gpt-test"
         assert config_data["agent"]["developer"]["description"] == "Updated desc"
 
-    def test_update_agent_config_returns_none_for_unknown(self, pilot: ConPilot) -> None:
+    def test_update_agent_config_returns_none_for_unknown(
+        self, pilot: ConPilot
+    ) -> None:
         updated = pilot.update_agent_config("ghost", {"active": True})
         assert updated is None
 
@@ -270,6 +274,8 @@ class TestAgentConfigEndpoints:
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
-            modify_agent_config("developer", body=AgentConfigModifyRequest(), pilot=pilot)
+            modify_agent_config(
+                "developer", body=AgentConfigModifyRequest(), pilot=pilot
+            )
 
         assert exc_info.value.status_code == 400

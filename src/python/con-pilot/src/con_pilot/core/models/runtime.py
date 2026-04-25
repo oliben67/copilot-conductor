@@ -21,7 +21,22 @@ class Agent(AgentConfig):
 
     @classmethod
     def set_running_checker(cls, checker: Callable[[str], bool] | None) -> None:
-        """Register a callback that checks whether an agent is running."""
+        """
+        Register a callback used to determine whether an agent is currently running.
+
+        Example:
+            Agent.set_running_checker(sdk.is_running)
+
+        Note:
+            Pass ``None`` to clear the registered checker.
+
+        :param checker: callable that returns ``True`` when the agent named
+            by its argument has a live SDK session, or ``None`` to disable
+            the check.
+        :type checker: `Callable[[str], bool] | None`
+        :return: None
+        :rtype: `None`
+        """
         cls._running_checker = checker
 
     def _compute_running(self) -> bool:
@@ -36,13 +51,25 @@ class Agent(AgentConfig):
             return False
 
     @model_validator(mode="after")
-    def compute_running(self) -> "Agent":
-        """Compute running after model validation."""
+    def compute_running(self) -> Agent:
+        """
+        Refresh ``running`` after Pydantic validation completes.
+
+        :return: this instance with ``running`` set from the registered checker.
+        :rtype: `Agent`
+        """
         self.running = self._compute_running()
         return self
 
     def set_role(self, role: str) -> Self:
-        """Set role and recompute running state for the updated identity."""
+        """
+        Set the agent role and recompute ``running`` for the new identity.
+
+        :param role: role identifier to assign.
+        :type role: `str`
+        :return: this instance with the updated role and running flag.
+        :rtype: `Self`
+        """
         super().set_role(role)
         self.running = self._compute_running()
         return self
@@ -51,11 +78,20 @@ class Agent(AgentConfig):
 class Conductor(ConductorConfig):
     """Singleton runtime config whose agents are materialized as ``Agent`` models."""
 
-    _instance: ClassVar["Conductor | None"] = None
+    _instance: ClassVar[Conductor | None] = None
 
     @model_validator(mode="after")
-    def upgrade_agents(self) -> "Conductor":
-        """Ensure all agents are runtime ``Agent`` instances."""
+    def upgrade_agents(self) -> Conductor:
+        """
+        Ensure every entry in :attr:`agents` is a runtime :class:`Agent`.
+
+        Note:
+            Existing :class:`Agent` instances are left untouched; bare
+            :class:`AgentConfig` entries are re-validated as :class:`Agent`.
+
+        :return: this instance with the ``agents`` mapping upgraded in place.
+        :rtype: `Conductor`
+        """
         upgraded: dict[str, AgentConfig] = {}
         for role, cfg in self.agents.items():
             if isinstance(cfg, Agent):
@@ -66,8 +102,26 @@ class Conductor(ConductorConfig):
         return self
 
     @classmethod
-    def instance(cls, data: dict[str, Any] | None = None) -> "Conductor":
-        """Return the singleton instance, creating/updating it from config data."""
+    def instance(cls, data: dict[str, Any] | None = None) -> Conductor:
+        """
+        Return the singleton :class:`Conductor`, creating or refreshing it.
+
+        Example:
+            conductor = Conductor.instance(config_dict)
+
+        Note:
+            On first call ``data`` is required to build the singleton; on
+            subsequent calls an optional ``data`` mapping refreshes the
+            existing instance's fields in place.
+
+        :param data: configuration dictionary used to construct or refresh
+            the singleton.
+        :type data: `dict[str, Any] | None`
+        :return: the singleton :class:`Conductor`.
+        :rtype: `Conductor`
+        :raises RuntimeError: when called for the first time with ``data``
+            set to ``None``.
+        """
         if cls._instance is None:
             if data is None:
                 raise RuntimeError("Conductor singleton not initialized")
@@ -82,5 +136,13 @@ class Conductor(ConductorConfig):
 
     @classmethod
     def reset_instance(cls) -> None:
-        """Reset singleton instance (used by tests/reloads)."""
+        """
+        Discard the singleton instance.
+
+        Note:
+            Primarily used by tests and reload paths.
+
+        :return: None
+        :rtype: `None`
+        """
         cls._instance = None

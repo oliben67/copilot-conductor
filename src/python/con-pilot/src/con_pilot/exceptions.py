@@ -1,8 +1,6 @@
 class AgentNamingPatternException(Exception):
     """Custom exception for invalid agent naming patterns."""
 
-    pass
-
 
 class TokenConflictError(Exception):
     """Raised when multiple GitHub token env vars are set with different values."""
@@ -22,3 +20,11 @@ class TokenNotFoundError(Exception):
         super().__init__(
             "No GitHub token found. Set one of: COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN"
         )
+
+
+class PermissionHandlerException(Exception):
+    """Raised when there is an issue with the permission handler setup."""
+
+
+class PermissionHandlerMissingException(PermissionHandlerException):
+    """Raised when no permission handler is available in the SDK."""

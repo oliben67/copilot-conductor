@@ -64,6 +64,7 @@ def setup_file_logging() -> None:
     root.setLevel(logging.INFO)
     root.addHandler(handler)
 
+
 # Initialize the default logger for the app
 configure_structlog()
 app_logger = structlog.get_logger("con_pilot")

@@ -1,15 +1,12 @@
 """Snapshot management endpoints for .github directory backups."""
 
-from typing import TYPE_CHECKING
-
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from con_pilot.core.services.snapshot import SnapshotMetadata
 
-if TYPE_CHECKING:
-    from con_pilot.conductor import ConPilot
+from con_pilot.conductor import ConPilot
 
 router = APIRouter(prefix="/snapshot", tags=["snapshot"])
 
@@ -77,7 +74,7 @@ class WatcherStatusResponse(BaseModel):
 
 
 @router.get("", response_model=SnapshotListResponse)
-def list_snapshots(pilot: ConPilot | None = None) -> SnapshotListResponse:
+def list_snapshots(pilot: ConPilot = Depends(get_pilot)) -> SnapshotListResponse:
     """
     List all stored .github snapshots.
 
@@ -97,7 +94,7 @@ def list_snapshots(pilot: ConPilot | None = None) -> SnapshotListResponse:
 )
 def create_snapshot(
     request: SnapshotCreateRequest | None = None,
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> SnapshotCreateResponse:
     """
     Create a new snapshot of the .github directory.
@@ -124,7 +121,7 @@ def create_snapshot(
 
 
 @router.get("/changes", response_model=ChangeDetectionResponse)
-def check_changes(pilot: ConPilot | None = None) -> ChangeDetectionResponse:
+def check_changes(pilot: ConPilot = Depends(get_pilot)) -> ChangeDetectionResponse:
     """
     Check if monitored files have changed since last snapshot.
 
@@ -143,7 +140,7 @@ def check_changes(pilot: ConPilot | None = None) -> ChangeDetectionResponse:
 
 @router.post("/check-and-create", response_model=SnapshotCreateResponse | None)
 def check_and_create_snapshot(
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> SnapshotCreateResponse | dict:
     """
     Check for changes and create automatic snapshot if needed.
@@ -164,7 +161,7 @@ def check_and_create_snapshot(
 
 
 @router.get("/watcher", response_model=WatcherStatusResponse)
-def get_watcher_status(pilot: ConPilot | None = None) -> WatcherStatusResponse:
+def get_watcher_status(pilot: ConPilot = Depends(get_pilot)) -> WatcherStatusResponse:
     """Get the current status of the change watcher."""
     pilot = pilot or get_pilot()
     service = pilot.snapshot_service
@@ -179,7 +176,7 @@ def get_watcher_status(pilot: ConPilot | None = None) -> WatcherStatusResponse:
 @router.post("/watcher/start", response_model=WatcherStatusResponse)
 def start_watcher(
     interval: int = 60,
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> WatcherStatusResponse:
     """
     Start the automatic snapshot watcher.
@@ -205,7 +202,7 @@ def start_watcher(
 
 
 @router.post("/watcher/stop", response_model=WatcherStatusResponse)
-def stop_watcher(pilot: ConPilot | None = None) -> WatcherStatusResponse:
+def stop_watcher(pilot: ConPilot = Depends(get_pilot)) -> WatcherStatusResponse:
     """Stop the automatic snapshot watcher."""
     pilot = pilot or get_pilot()
     service = pilot.snapshot_service
@@ -225,7 +222,7 @@ def stop_watcher(pilot: ConPilot | None = None) -> WatcherStatusResponse:
 @router.get("/{filename}", response_model=SnapshotMetadata)
 def get_snapshot(
     filename: str,
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> SnapshotMetadata:
     """Get metadata for a specific snapshot."""
     pilot = pilot or get_pilot()
@@ -244,7 +241,7 @@ def get_snapshot(
 @router.get("/{filename}/download")
 def download_snapshot(
     filename: str,
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> FileResponse:
     """Download a snapshot file."""
     pilot = pilot or get_pilot()
@@ -267,7 +264,7 @@ def download_snapshot(
 @router.delete("/{filename}", response_model=SnapshotDeleteResponse)
 def delete_snapshot(
     filename: str,
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> SnapshotDeleteResponse:
     """Delete a snapshot."""
     pilot = pilot or get_pilot()

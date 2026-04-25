@@ -8,7 +8,6 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, FastAPI
 
@@ -17,17 +16,18 @@ from con_pilot.logger import app_logger
 from con_pilot.v1.endpoints import (
     agents_router,
     config_router,
+    cron_router,
     health_router,
     login_router,
     projects_router,
     snapshot_router,
     sync_router,
+    tasks_router,
     users_router,
     validation_router,
 )
 
-if TYPE_CHECKING:
-    from con_pilot.conductor import ConPilot
+from con_pilot.conductor import ConPilot
 
 log = app_logger.bind(module=__name__)
 
@@ -43,6 +43,8 @@ router.include_router(agents_router)
 router.include_router(config_router)
 router.include_router(snapshot_router)
 router.include_router(sync_router)
+router.include_router(cron_router)
+router.include_router(tasks_router)
 router.include_router(projects_router)
 router.include_router(validation_router)
 
@@ -97,6 +99,8 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
         app.state.copilot_service = None
         app.state.copilot_startup_complete = False
         app.state.copilot_startup_error = None
+        app.state.scheduler_startup_complete = False
+        app.state.scheduler_startup_error = None
 
         # Initialize config store and load all versions
         pilot.config_store.ensure_scores_dir()
@@ -112,7 +116,7 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
             backup = pilot.config_store.backup_active()
             if backup:
                 log.info("Backed up active config: version %s", backup.version)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             log.warning("Failed to backup active config: %s", e)
 
         # Initialize snapshot service and load index
@@ -133,7 +137,7 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
 
         # Start Copilot SDK service so conductor session exists at startup.
         try:
-            from con_pilot.core.services.copilot_service import CopilotAgentService  # noqa: PLC0415
+            from con_pilot.core.services.copilot_service import CopilotAgentService
 
             copilot_service = CopilotAgentService(pilot)
             app.state.copilot_service = copilot_service
@@ -155,6 +159,28 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
             app.state.copilot_startup_error = "CopilotAgentService startup failed"
             log.exception("CopilotAgentService startup failed")
 
+        # Start APScheduler cron service backed by SQLite under CONDUCTOR_HOME.
+        try:
+            await pilot.start_scheduler()
+            app.state.scheduler_startup_complete = True
+        except Exception:
+            app.state.scheduler_startup_error = "APScheduler startup failed"
+            log.exception("APScheduler startup failed")
+
+        # Start pending-task dispatcher (drains pending.log into the conductor session).
+        app.state.dispatcher = None
+        if copilot_service is not None:
+            try:
+                from con_pilot.dispatch import PendingDispatcher
+
+                dispatcher = PendingDispatcher(pilot, copilot_service)
+                pilot._dispatcher = dispatcher
+                app.state.dispatcher = dispatcher
+                await dispatcher.start()
+                log.info("PendingDispatcher started")
+            except Exception:
+                log.exception("PendingDispatcher startup failed")
+
         def _loop() -> None:
             while True:
                 try:
@@ -172,6 +198,14 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
         # Cleanup: stop snapshot watcher
         pilot.snapshot_service.stop_watcher()
 
+        if app.state.dispatcher is not None:
+            try:
+                await app.state.dispatcher.stop()
+                log.info("PendingDispatcher stopped")
+            except Exception:
+                log.exception("PendingDispatcher shutdown failed")
+            pilot._dispatcher = None
+
         if copilot_service is not None:
             try:
                 log.debug("Stopping CopilotAgentService")
@@ -179,6 +213,11 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
                 log.info("CopilotAgentService stopped")
             except Exception:
                 log.exception("CopilotAgentService shutdown failed")
+
+        try:
+            await pilot.stop_scheduler()
+        except Exception:
+            log.exception("APScheduler shutdown failed")
 
     app = FastAPI(title="con-pilot", lifespan=lifespan)
     app.include_router(router, prefix=_api_prefix())

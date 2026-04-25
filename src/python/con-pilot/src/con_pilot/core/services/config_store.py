@@ -80,12 +80,22 @@ class ConfigStore:
 
     @property
     def scores_dir(self) -> str:
-        """Path to CONDUCTOR_HOME/.scores/"""
+        """
+        Return the path to ``$CONDUCTOR_HOME/.scores/``.
+
+        :return: absolute path to the scores directory.
+        :rtype: `str`
+        """
         return os.path.join(self._paths.home, self.SCORES_DIR)
 
     @property
     def index_path(self) -> str:
-        """Path to CONDUCTOR_HOME/.scores/index.json"""
+        """
+        Return the path to ``$CONDUCTOR_HOME/.scores/index.json``.
+
+        :return: absolute path to the version index file.
+        :rtype: `str`
+        """
         return os.path.join(self.scores_dir, self.INDEX_FILE)
 
     def _config_filename(self, version: str) -> str:
@@ -99,12 +109,26 @@ class ConfigStore:
     # ── Initialization ─────────────────────────────────────────────────────────
 
     def ensure_scores_dir(self) -> None:
-        """Create .scores directory if it doesn't exist."""
+        """
+        Create the ``.scores`` directory when it does not already exist.
+
+        :return: None
+        :rtype: `None`
+        """
         os.makedirs(self.scores_dir, exist_ok=True)
         log.info("Ensured scores directory: %s", self.scores_dir)
 
     def load_index(self) -> ConfigIndex:
-        """Load or create the version index."""
+        """
+        Load the version index from disk, creating an empty one if needed.
+
+        Note:
+            The result is cached on the store instance; subsequent calls
+            return the same object until the cache is invalidated by a save.
+
+        :return: the parsed (or freshly created) :class:`ConfigIndex`.
+        :rtype: `ConfigIndex`
+        """
         if self._index is not None:
             return self._index
 
@@ -113,7 +137,7 @@ class ConfigStore:
                 with open(self.index_path) as f:
                     data = json.load(f)
                 self._index = ConfigIndex(**data)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.warning("Failed to load index, creating new: %s", e)
                 self._index = ConfigIndex()
         else:
@@ -132,9 +156,15 @@ class ConfigStore:
 
     def load_all(self) -> dict[str, ConductorConfig]:
         """
-        Load all stored configs into memory.
+        Load every indexed configuration version into the in-memory cache.
 
-        Returns the cache dict keyed by version number.
+        Example:
+            cache = store.load_all()
+            for version, cfg in cache.items():
+                ...
+
+        :return: a mapping of version number to parsed :class:`ConductorConfig`.
+        :rtype: `dict[str, ConductorConfig]`
         """
         self.ensure_scores_dir()
         index = self.load_index()
@@ -156,7 +186,19 @@ class ConfigStore:
         return self._cache
 
     def get(self, version: str) -> ConductorConfig | None:
-        """Get a config by version number from cache."""
+        """
+        Return a stored configuration by version number.
+
+        Note:
+            The cache is consulted first; on a miss the file is loaded and
+            cached for subsequent calls.
+
+        :param version: version identifier (e.g. ``"0.4.0"``).
+        :type version: `str`
+        :return: the parsed configuration, or ``None`` when no file exists
+            for that version.
+        :rtype: `ConductorConfig | None`
+        """
         if version not in self._cache:
             # Try loading from disk
             path = self._config_path(version)
@@ -167,7 +209,16 @@ class ConfigStore:
         return self._cache.get(version)
 
     def get_or_raise(self, version: str) -> ConductorConfig:
-        """Get a config by version number, raising if not found."""
+        """
+        Return a stored configuration by version, raising when missing.
+
+        :param version: version identifier.
+        :type version: `str`
+        :return: the parsed configuration.
+        :rtype: `ConductorConfig`
+        :raises VersionNotFoundError: when no configuration is stored under
+            the given version.
+        """
         config = self.get(version)
         if config is None:
             raise VersionNotFoundError(version)
@@ -175,7 +226,13 @@ class ConfigStore:
 
     @property
     def versions(self) -> list[ConfigVersion]:
-        """List all stored versions with metadata."""
+        """
+        Return version metadata for every stored configuration.
+
+        :return: a list of :class:`ConfigVersion` entries sorted by descending
+            timestamp.
+        :rtype: `list[ConfigVersion]`
+        """
         return self.load_index().versions
 
     # ── Storage Operations ─────────────────────────────────────────────────────
@@ -187,18 +244,25 @@ class ConfigStore:
         allow_overwrite: bool = False,
     ) -> ConfigVersion:
         """
-        Save a new configuration version.
+        Persist a configuration version to disk and update the index.
 
-        Args:
-            config: The conductor config to save (must have version info).
-            allow_overwrite: If True, allows updating an existing version.
+        Example:
+            meta = store.save(config)
 
-        Returns:
-            ConfigVersion metadata for the saved config.
+        Note:
+            The configuration is serialised to YAML under
+            ``conductor.{version}.yaml`` and the index is rewritten so the
+            newest entry sorts first.
 
-        Raises:
-            ValueError: If config has no version info.
-            VersionExistsError: If version exists and allow_overwrite is False.
+        :param config: the configuration to save; must declare ``version``.
+        :type config: `ConductorConfig`
+        :param allow_overwrite: when ``True`` an existing version is replaced.
+        :type allow_overwrite: `bool`
+        :return: metadata describing the persisted version.
+        :rtype: `ConfigVersion`
+        :raises ValueError: when ``config.version`` is missing.
+        :raises VersionExistsError: when the version already exists and
+            ``allow_overwrite`` is ``False``.
         """
         if not config.version:
             raise ValueError("Configuration must have version info to save")
@@ -251,9 +315,18 @@ class ConfigStore:
 
     def backup_active(self) -> ConfigVersion | None:
         """
-        Backup the current active configuration to .scores.
+        Snapshot the currently active configuration into ``.scores``.
 
-        Returns the version metadata if successful, None if no active config.
+        Example:
+            meta = store.backup_active()
+
+        Note:
+            Skipped (returns ``None``) when no active config exists or when
+            the active config has no ``version`` information.
+
+        :return: metadata for the saved snapshot, or ``None`` when nothing
+            could be backed up.
+        :rtype: `ConfigVersion | None`
         """
         if not os.path.exists(self._paths.config_path):
             return None
@@ -277,18 +350,21 @@ class ConfigStore:
 
     def activate(self, version: str) -> ConductorConfig:
         """
-        Make a stored version the active configuration.
+        Make a stored version the active configuration on disk.
 
-        Copies the versioned config to CONDUCTOR_HOME/conductor.yaml.
+        Example:
+            cfg = store.activate("0.4.0")
 
-        Args:
-            version: Version number to activate.
+        Note:
+            The current active config is backed up via :meth:`backup_active`
+            before the new version is written to ``conductor.yaml``.
 
-        Returns:
-            The activated ConductorConfig.
-
-        Raises:
-            VersionNotFoundError: If version doesn't exist.
+        :param version: version identifier to activate.
+        :type version: `str`
+        :return: the configuration that is now active.
+        :rtype: `ConductorConfig`
+        :raises VersionNotFoundError: when ``version`` does not exist in
+            ``.scores``.
         """
         config = self.get_or_raise(version)
 
@@ -313,18 +389,22 @@ class ConfigStore:
         context_lines: int = 3,
     ) -> str:
         """
-        Generate a unified diff between two config versions.
+        Build a unified YAML diff between two stored configuration versions.
 
-        Args:
-            version_a: First version number (older).
-            version_b: Second version number (newer).
-            context_lines: Number of context lines in diff.
+        Example:
+            print(store.diff("0.3.0", "0.4.0"))
 
-        Returns:
-            Unified diff string.
-
-        Raises:
-            VersionNotFoundError: If either version doesn't exist.
+        :param version_a: identifier of the older configuration.
+        :type version_a: `str`
+        :param version_b: identifier of the newer configuration.
+        :type version_b: `str`
+        :param context_lines: number of unchanged lines to keep around each
+            hunk.
+        :type context_lines: `int`
+        :return: a unified-diff string suitable for printing or saving as a
+            patch.
+        :rtype: `str`
+        :raises VersionNotFoundError: when either version is unknown.
         """
         config_a = self.get_or_raise(version_a)
         config_b = self.get_or_raise(version_b)
@@ -353,14 +433,20 @@ class ConfigStore:
 
     def diff_with_active(self, version: str, *, context_lines: int = 3) -> str:
         """
-        Generate a diff between a stored version and the active config.
+        Build a unified YAML diff between a stored version and the active config.
 
-        Args:
-            version: Version to compare against active config.
-            context_lines: Number of context lines in diff.
+        Example:
+            patch = store.diff_with_active("0.3.0")
 
-        Returns:
-            Unified diff string.
+        :param version: identifier of the stored version to compare.
+        :type version: `str`
+        :param context_lines: number of unchanged lines to keep around each
+            hunk.
+        :type context_lines: `int`
+        :return: a unified-diff string.
+        :rtype: `str`
+        :raises FileNotFoundError: when no active configuration exists.
+        :raises VersionNotFoundError: when ``version`` is unknown.
         """
         # Load active config
         if not os.path.exists(self._paths.config_path):
@@ -400,13 +486,17 @@ class ConfigStore:
 
     def delete(self, version: str) -> None:
         """
-        Delete a stored configuration version.
+        Delete a stored configuration version and its index entry.
 
-        Args:
-            version: Version number to delete.
+        Example:
+            store.delete("0.2.0")
 
-        Raises:
-            VersionNotFoundError: If version doesn't exist.
+        :param version: identifier of the version to delete.
+        :type version: `str`
+        :return: None
+        :rtype: `None`
+        :raises VersionNotFoundError: when no version with that identifier
+            exists.
         """
         index = self.load_index()
 

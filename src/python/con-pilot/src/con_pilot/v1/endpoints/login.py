@@ -74,7 +74,7 @@ def login(body: LoginRequest) -> TokenResponse:
                 detail="Invalid credentials",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        subject = body.username  # type: ignore[assignment]
+        subject = str(body.username)
         session_id = body.session_id
 
     extra = {"sid": session_id} if session_id else None

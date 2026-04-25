@@ -1,14 +1,11 @@
 """Agent-related endpoints."""
 
-from typing import TYPE_CHECKING
-
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 from con_pilot.core.models import AgentDetailResponse, AgentListResponse
 
-if TYPE_CHECKING:
-    from con_pilot.conductor import ConPilot
+from con_pilot.conductor import ConPilot
 
 router = APIRouter(tags=["agents"])
 
@@ -37,7 +34,7 @@ def get_pilot() -> ConPilot:
 
 def verify_admin_key(
     x_admin_key: str | None = Header(None),
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> ConPilot:
     """Verify the admin key header matches the system key."""
     pilot = pilot or get_pilot()
@@ -59,7 +56,7 @@ def verify_admin_key(
 
 @router.get("/agents")
 def list_agents(
-    project: str | None = None, pilot: ConPilot | None = None
+    project: str | None = None, pilot: ConPilot = Depends(get_pilot)
 ) -> AgentListResponse:
     """List all agents and their status."""
     pilot = pilot or get_pilot()
@@ -67,14 +64,14 @@ def list_agents(
 
 
 @router.get("/agents/config")
-def list_agent_configs(pilot: ConPilot | None = None) -> dict[str, AgentDetailResponse]:
+def list_agent_configs(pilot: ConPilot = Depends(get_pilot)) -> dict[str, AgentDetailResponse]:
     """Return agent descriptions for all agents from the runtime singleton."""
     pilot = pilot or get_pilot()
     return pilot.list_agent_configs()
 
 
 @router.get("/agents/config/{name}")
-def get_agent_config(name: str, pilot: ConPilot | None = None) -> AgentDetailResponse:
+def get_agent_config(name: str, pilot: ConPilot = Depends(get_pilot)) -> AgentDetailResponse:
     """Return agent description for one agent by role key or display name."""
     pilot = pilot or get_pilot()
     result = pilot.get_agent_config(name)
@@ -93,7 +90,7 @@ def get_agent_config(name: str, pilot: ConPilot | None = None) -> AgentDetailRes
 def modify_agent_config(
     name: str,
     body: AgentConfigModifyRequest,
-    pilot: ConPilot | None = None,
+    pilot: ConPilot = Depends(get_pilot),
 ) -> AgentDetailResponse:
     """Modify mutable configuration for one agent and persist conductor config."""
     pilot = pilot or get_pilot()
@@ -121,7 +118,7 @@ def modify_agent_config(
 
 
 @router.get("/agents/{name}")
-def get_agent(name: str, pilot: ConPilot | None = None) -> AgentDetailResponse:
+def get_agent(name: str, pilot: ConPilot = Depends(get_pilot)) -> AgentDetailResponse:
     """Return properties and assigned tasks for an agent by role key or display name."""
     pilot = pilot or get_pilot()
     result = pilot.get_agent(name)
