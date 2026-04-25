@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from con_pilot.conductor.models import AgentDetailResponse, AgentListResponse
+from con_pilot.conductor.responses import AgentDetailResponse, AgentListResponse
 
 from con_pilot.conductor import ConPilot
 

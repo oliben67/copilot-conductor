@@ -6,7 +6,8 @@ from con_pilot.conductor import ConPilot
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from con_pilot.conductor.models import ConductorConfig, ValidationResult
+from con_pilot.conductor.models import ConductorConfig
+from con_pilot.conductor.responses import ValidationResult
 from con_pilot.conductor.config_store import (
     ConfigVersion,
     VersionExistsError,

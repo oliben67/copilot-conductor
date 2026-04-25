@@ -1044,21 +1044,3 @@ class Conductor(ConductorConfig):
         :rtype: `None`
         """
         cls._instance = None
-
-
-# ── Re-exports ─────────────────────────────────────────────────────────────
-# Response models live in :mod:`con_pilot.conductor.responses` but are
-# re-exported here so call sites can write::
-#
-#     from con_pilot.conductor.models import AgentDetailResponse, ConductorConfig
-#
-# regardless of whether the symbol is a configuration model (defined above)
-# or an HTTP response model.
-from con_pilot.conductor.responses import (  # noqa: E402
-    AgentDetailResponse,
-    AgentInfo,
-    AgentListResponse,
-    ValidationError,
-    ValidationResult,
-)
-

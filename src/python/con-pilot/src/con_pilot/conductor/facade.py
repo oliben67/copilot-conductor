@@ -24,11 +24,10 @@ from con_pilot.auth.github_token import (
     GitHubToken,
     resolve_github_token,
 )
-from con_pilot.conductor.models import (
+from con_pilot.conductor.models import Conductor, ConductorConfig
+from con_pilot.conductor.responses import (
     AgentDetailResponse,
     AgentListResponse,
-    Conductor,
-    ConductorConfig,
     ValidationError,
     ValidationResult,
 )
@@ -39,6 +38,7 @@ from con_pilot.agents.service import AgentsFacet
 from con_pilot.cron.service import CronFacet
 
 log = app_logger.bind(module=__name__)
+
 
 class ConPilot(AgentsFacet, CronFacet):
     """
@@ -627,7 +627,6 @@ class ConPilot(AgentsFacet, CronFacet):
             k for k, v in self.config.agents.items() if k != "conductor" and v.active
         }
 
-
     def _service_config(self) -> tuple[str, int]:
         """Read [con-pilot] host/port from $CONDUCTOR_HOME/.env (TOML). Falls back to localhost:8000."""
         env_path = Path(self.home) / ".env"
@@ -947,7 +946,6 @@ class ConPilot(AgentsFacet, CronFacet):
 
         log.info("Project '%s' retired", name)
 
-
     def print_env(self, shell: bool = False) -> None:
         """
         Print session environment variables to standard output.
@@ -985,7 +983,6 @@ class ConPilot(AgentsFacet, CronFacet):
                 print(f"{key}={value}")
 
     # ── Agent sync ─────────────────────────────────────────────────────────────
-
 
     def sync(self, cwd: str | None = None) -> None:
         """
@@ -1319,17 +1316,13 @@ class _CronAPI:
     def add(self, task_data: dict[str, Any]) -> dict[str, Any]:
         return self._pilot.add_cron_job(task_data)
 
-    def update(
-        self, name: str, changes: dict[str, Any]
-    ) -> dict[str, Any] | None:
+    def update(self, name: str, changes: dict[str, Any]) -> dict[str, Any] | None:
         return self._pilot.update_cron_job(name, changes)
 
     def remove(self, name: str) -> bool:
         return self._pilot.remove_cron_job(name)
 
-    def read_logs(
-        self, lines: int = 100, project: str | None = None
-    ) -> dict[str, Any]:
+    def read_logs(self, lines: int = 100, project: str | None = None) -> dict[str, Any]:
         return self._pilot.read_cron_logs(lines=lines, project=project)
 
     def run_task(self, name: str) -> bool:

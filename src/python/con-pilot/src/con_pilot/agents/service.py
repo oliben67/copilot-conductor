@@ -23,8 +23,8 @@ from typing import Any
 import yaml
 
 from con_pilot.logger import app_logger
-from con_pilot.conductor.models import (
-    Agent,
+from con_pilot.conductor.models import Agent
+from con_pilot.conductor.responses import (
     AgentDetailResponse,
     AgentInfo,
     AgentListResponse,
@@ -336,6 +336,7 @@ class AgentsFacet:
             instances=agent_cfg.instances,
             instructions=agent_cfg.instructions,
         )
+
     # ── Agent instruction editing ───────────────────────────────────────────────
 
     @staticmethod
@@ -546,6 +547,7 @@ class AgentsFacet:
             )
             Path(fpath).write_text(content)
             log.info("Reset: %s", fpath)
+
     def _apply_template(self, template: str, name: str, model: str) -> str:
         """
         Adapt a template file for a new agent instance.

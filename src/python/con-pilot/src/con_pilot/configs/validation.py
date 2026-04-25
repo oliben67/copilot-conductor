@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends
 
-from con_pilot.conductor.models import ValidationResult
+from con_pilot.conductor.responses import ValidationResult
 from con_pilot.conductor.requests import ValidateRequest
 
 from con_pilot.conductor import ConPilot
