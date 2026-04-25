@@ -15,7 +15,7 @@ vars:
     sh: echo "${PYTHON_VERSION//./}"
   # Bundled release version is pegged to con-pilot
   # CONDUCTOR_ENV is empty for production builds and "-dev" for dev builds
-  # (set via the environment by `task build-dev`). It is appended to the
+  # (set via the environment by `task release:dev`). It is appended to the
   # VERSION filename below so dev builds read VERSION-dev instead of VERSION.
   CONDUCTOR_ENV:
     sh: echo "${CONDUCTOR_ENV:-}"
@@ -202,9 +202,9 @@ tasks:
     desc: Display admin key once after successful install by reading it from AppImage payload.
     cmds:
       - |
-        # Decide dev vs prod from build-time CONDUCTOR_ENV (set by `task build-dev`),
+        # Decide dev vs prod from build-time CONDUCTOR_ENV (set by `task release:dev`),
         # not from the deployed AppImage payload — a stale dev AppImage left in
-        # CONDUCTOR_HOME from a previous `task install-dev` must not make a
+        # CONDUCTOR_HOME from a previous `task install:dev` must not make a
         # production install print "dev build detected".
         if [[ "{{.CONDUCTOR_ENV}}" == "-dev" ]]; then
           echo "Skipping admin-key display: dev build (CONDUCTOR_ENV=-dev)."
@@ -335,12 +335,18 @@ tasks:
   # ── Deployment ──────────────────────────────────────────────────────────────
 
   deploy:
-    desc: Install/upgrade con-pilot into the conductor venv, then (re)start the service.
-    dir: "{{.CON_PILOT_DIR}}"
+    desc: "Full prod pipeline: build → release → install."
     cmds:
-      - uv sync --all-groups
-      - task: _deploy-sync-cli
-      - task: _restart
+      - task: build
+      - task: release
+      - task: install
+
+  deploy:dev:
+    desc: "Full dev pipeline: build:dev → release:dev → install:dev."
+    cmds:
+      - task: build:dev
+      - task: release:dev
+      - task: install:dev
 
   _deploy-sync-cli:
     internal: true
@@ -441,16 +447,15 @@ tasks:
       - task: test
 
   build:
-    desc: "Run lint, tests, and full release packaging (including releases/v*/ setup and notes)."
+    desc: "Run lint and tests. Run `task release` separately to package artefacts."
     env:
       # Force a production build regardless of any inherited CONDUCTOR_ENV
-      # (e.g. left over from a prior `task build-dev`). Sub-tasks invoked
+      # (e.g. left over from a prior `task release:dev`). Sub-tasks invoked
       # via `task:` inherit this environment.
       CONDUCTOR_ENV: ""
     cmds:
       - task: lint
       - task: test
-      - task: release
 
   # ── Lectern (VS Code Extension) ──────────────────────────────────────────────
 
@@ -621,53 +626,23 @@ tasks:
       - task: appimage:deps
       - task: appimage:build
 
-  build-all:
-    desc: "Build everything. Pass -- --force to rebuild, -- --release to bump version and package setup.sh."
-    cmds:
-      - task: check
-      - |
-        FORCE=false
-        RELEASE=false
-        case "{{.CLI_ARGS}}" in
-          *--force*|*-f*) FORCE=true ;;
-        esac
-        case "{{.CLI_ARGS}}" in
-          *--release*) RELEASE=true ;;
-        esac
-
-        if [[ "$FORCE" == true ]]; then
-          task appimage:force
-        else
-          task appimage
-        fi
-
-        if [[ "$RELEASE" == true ]]; then
-          task release:bump
-          task release
-        fi
-
-  build-dev:
-    desc: "Build a dev release: bump VERSION files to <X.Y.Z>-dev, lint + tests + AppImage + vsix + setup.sh copied to releases/v[VERSION]-dev/, restore VERSION files. Skips release notes, history, and releases-details.json updates."
+  build:dev:
+    desc: "Bump VERSION files to <X.Y.Z>-dev, run lint + tests against the dev environment, then restore VERSION files. No packaging."
     cmds:
       - |
         set -e
-        ENV="dev"
+        # ── Bump VERSION files to -dev (with EXIT trap restoring them) ─────
         VERSION_FILES=(
           "{{.ROOT_DIR}}/src/python/con-pilot/VERSION"
           "{{.ROOT_DIR}}/src/conduct-cli/VERSION"
           "{{.ROOT_DIR}}/src/vscode/conduct-lectern/VERSION"
         )
-        # The lectern Taskfile's `version:sync` step rewrites package.json from
-        # its VERSION file, so we snapshot it for restore. We deliberately do
-        # NOT touch pyproject.toml: PEP 440 would normalize "0.4.0-dev" to
-        # "0.4.0.dev0" in the wheel metadata, which is awkward to render and
-        # to revert. The dev runtime obtains its "-dev" suffix purely from
-        # CONDUCTOR_ENV=DEV (set by AppRun via the `dev` AppDir marker).
+        # The lectern Taskfile's `version:sync` step rewrites package.json
+        # from its VERSION file, so we snapshot it for restore.
         SIDECAR_FILES=(
           "{{.ROOT_DIR}}/src/vscode/conduct-lectern/package.json"
         )
 
-        # Snapshot originals so the EXIT trap can restore them on success or failure.
         BACKUP_DIR="$(mktemp -d)"
         : > "$BACKUP_DIR/.map"
         for vf in "${VERSION_FILES[@]}" "${SIDECAR_FILES[@]}"; do
@@ -687,7 +662,6 @@ tasks:
         }
         trap restore_versions EXIT
 
-        # Bump each VERSION file by appending -dev (idempotent).
         echo "Bumping VERSION files for dev build:"
         for vf in "${VERSION_FILES[@]}"; do
           v="$(tr -d '[:space:]' < "$vf")"
@@ -698,18 +672,71 @@ tasks:
           echo "  $(realpath --relative-to='{{.ROOT_DIR}}' "$vf") = $(cat "$vf")"
         done
 
-        # Run the build steps as fresh `task` subprocesses so each one re-reads
-        # VERSION files via its `sh:` vars (top-level variables are resolved
-        # once per task process, so subtask invocations within the same parent
-        # would still see the original values).
-        # Dev AppImages bundle the full `dev` dependency group (debugpy,
-        # jupyter, pytest, ruff) so the resulting con-pilot install is fully
-        # capable of running the dev tooling offline.
-        # Export CONDUCTOR_ENV=-dev so child `task` processes resolve
-        # {{.CONDUCTOR_ENV}} to "-dev" and read VERSION-dev sidecar files.
-        export CONDUCTOR_ENV="-dev"
+        # Run the build steps as fresh `task` subprocesses so each one
+        # re-reads VERSION files via its `sh:` vars. We do NOT export
+        # CONDUCTOR_ENV here: the VERSION files have been bumped in place,
+        # and exporting CONDUCTOR_ENV=-dev would make child `task` vars
+        # look for nonexistent VERSION-dev sidecar files.
         task lint
         task test
+
+  release:dev:
+    desc: "Build a dev release: bump VERSION files to <X.Y.Z>-dev, build dev AppImage + vsix + setup.sh into releases/v[VERSION]-dev/, restore VERSION files. Skips lint/tests, release notes, history, and releases-details.json updates."
+    cmds:
+      - |
+        set -e
+        # ── Bump VERSION files to -dev (with EXIT trap restoring them) ─────
+        VERSION_FILES=(
+          "{{.ROOT_DIR}}/src/python/con-pilot/VERSION"
+          "{{.ROOT_DIR}}/src/conduct-cli/VERSION"
+          "{{.ROOT_DIR}}/src/vscode/conduct-lectern/VERSION"
+        )
+        # We deliberately do NOT touch pyproject.toml: PEP 440 would
+        # normalize "0.4.0-dev" to "0.4.0.dev0" in the wheel metadata,
+        # which is awkward to render and to revert. The dev runtime
+        # obtains its "-dev" suffix purely from CONDUCTOR_ENV=DEV (set
+        # by AppRun via the `dev` AppDir marker).
+        SIDECAR_FILES=(
+          "{{.ROOT_DIR}}/src/vscode/conduct-lectern/package.json"
+        )
+
+        BACKUP_DIR="$(mktemp -d)"
+        : > "$BACKUP_DIR/.map"
+        for vf in "${VERSION_FILES[@]}" "${SIDECAR_FILES[@]}"; do
+          h="$(printf '%s' "$vf" | md5sum | awk '{print $1}')"
+          cp -p "$vf" "$BACKUP_DIR/$h"
+          printf '%s\t%s\n' "$vf" "$BACKUP_DIR/$h" >> "$BACKUP_DIR/.map"
+        done
+
+        restore_versions() {
+          local rc=$?
+          while IFS=$'\t' read -r vf backup; do
+            [[ -f "$backup" ]] && cp -p "$backup" "$vf"
+          done < "$BACKUP_DIR/.map"
+          rm -rf "$BACKUP_DIR"
+          echo "Restored VERSION files and version sidecars."
+          return $rc
+        }
+        trap restore_versions EXIT
+
+        echo "Bumping VERSION files for dev release:"
+        for vf in "${VERSION_FILES[@]}"; do
+          v="$(tr -d '[:space:]' < "$vf")"
+          case "$v" in
+            *-dev) ;;
+            *) printf '%s-dev\n' "$v" > "$vf" ;;
+          esac
+          echo "  $(realpath --relative-to='{{.ROOT_DIR}}' "$vf") = $(cat "$vf")"
+        done
+
+        # Dev AppImages bundle the full `dev` dependency group (debugpy,
+        # jupyter, pytest, ruff) so the resulting con-pilot install is
+        # fully capable of running the dev tooling offline.
+        # We do NOT export CONDUCTOR_ENV here: VERSION files are bumped in
+        # place above, so child `task` subprocesses pick up the -dev suffix
+        # by re-reading VERSION directly. Exporting CONDUCTOR_ENV=-dev
+        # would make {{.VERSION}} resolve via VERSION-dev sidecar files
+        # which do not exist, yielding an empty version string.
         CON_PILOT_INCLUDE_DEV=1 task appimage:build
         task lectern:package
         task release:package
@@ -760,9 +787,9 @@ tasks:
         find "$DEV_DIR" -mindepth 1 -maxdepth 1 -type f -printf '  %p\n' | sort
         echo ""
         echo "(Skipped: release-notes, release-history.md, releases-details.json)"
-        echo "To install the dev build into CONDUCTOR_HOME, run:  task install-dev"
+        echo "To install the dev build into CONDUCTOR_HOME, run:  task install:dev"
 
-  install-dev:
+  install:dev:
     desc: "Install the most recent dev AppImage from releases/v*-dev/ into CONDUCTOR_HOME and restart the service."
     cmds:
       - |
@@ -771,7 +798,7 @@ tasks:
         DEV_APPIMAGE="$(ls -1t {{.ROOT_DIR}}/releases/v*-dev/con-pilot-*-x86_64.AppImage 2>/dev/null | head -n 1 || true)"
         if [[ -z "$DEV_APPIMAGE" ]]; then
           echo "Error: no dev AppImage found under releases/v*-dev/."
-          echo "Build one first with:  task build-dev"
+          echo "Build one first with:  task build:dev"
           exit 1
         fi
         echo "Installing dev AppImage: $DEV_APPIMAGE"
@@ -818,21 +845,6 @@ tasks:
         echo ""
         "{{.ROOT_DIR}}/conduct" version
         "{{.ROOT_DIR}}/conduct" status
-
-  start-dev:
-    desc: "Wipe any existing install ($CONDUCTOR_HOME/uninstall_conductor.sh), rebuild a dev AppImage, and install it."
-    cmds:
-      - |
-        set -e
-        UNINSTALL="{{.CONDUCTOR_HOME}}/uninstall_conductor.sh"
-        if [[ -x "$UNINSTALL" ]]; then
-          echo "Running $UNINSTALL …"
-          "$UNINSTALL"
-        else
-          echo "No $UNINSTALL found — skipping uninstall step."
-        fi
-      - task: build-dev
-      - task: install-dev
 
   # ── Release ─────────────────────────────────────────────────────────────────
 
