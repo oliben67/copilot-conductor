@@ -794,6 +794,11 @@ tasks:
 
         # Start the service and wait for /health.
         LOG="{{.CONDUCTOR_HOME}}/con-pilot.log"
+        if [[ -n "${SENTRY_DSN:-}" ]]; then
+          echo "Sentry: SENTRY_DSN detected — forwarding to dev AppImage."
+        else
+          echo "Sentry: SENTRY_DSN not set — error reporting disabled."
+        fi
         CON_PILOT_DEV_SHOW_ME=1 setsid "$DEST" serve >> "$LOG" 2>&1 &
         API_PREFIX="/${CON_PILOT_API_BASE:-api}/${CON_PILOT_API_VERSION:-v1}"
         HEALTH_URL="http://{{.CON_PILOT_HOST}}:{{.CON_PILOT_PORT}}${API_PREFIX}/health"

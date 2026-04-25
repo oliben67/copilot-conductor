@@ -23,6 +23,7 @@ import argparse
 import os
 
 from con_pilot.logger import setup_file_logging
+from con_pilot.observability import init_sentry
 
 
 def _setup_logging() -> None:
@@ -42,7 +43,11 @@ def _maybe_start_debugpy() -> None:
     """
     if os.environ.get("CONDUCTOR_ENV") != "DEV":
         return
-    if os.environ.get("CONDUCTOR_DEBUGPY", "").strip().lower() not in ("1", "true", "yes"):
+    if os.environ.get("CONDUCTOR_DEBUGPY", "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
         return
     try:
         import debugpy  # type: ignore[import-not-found]
@@ -62,7 +67,11 @@ def _maybe_start_debugpy() -> None:
         return
 
     print(f"[con-pilot] debugpy listening on {host}:{port}")
-    if os.environ.get("CONDUCTOR_DEBUGPY_WAIT", "").strip().lower() in ("1", "true", "yes"):
+    if os.environ.get("CONDUCTOR_DEBUGPY_WAIT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
         print("[con-pilot] waiting for VS Code debugger to attach…")
         debugpy.wait_for_client()
         print("[con-pilot] debugger attached.")
@@ -70,6 +79,7 @@ def _maybe_start_debugpy() -> None:
 
 def main() -> None:
     _setup_logging()
+    init_sentry()
     _maybe_start_debugpy()
 
     parser = argparse.ArgumentParser(
