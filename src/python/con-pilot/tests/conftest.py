@@ -2,7 +2,7 @@
 
 import pytest
 
-from con_pilot.auth import clear_token_cache
+from con_pilot.security.auth import clear_token_cache
 
 
 @pytest.fixture(autouse=True)

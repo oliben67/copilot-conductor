@@ -22,8 +22,8 @@ from typing import Any
 
 import yaml
 
-from con_pilot.logger import app_logger
-from con_pilot.models import (
+from con_pilot.runtime.logger import app_logger
+from con_pilot.core.models import (
     Agent,
     AgentDetailResponse,
     AgentInfo,

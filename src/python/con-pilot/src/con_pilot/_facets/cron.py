@@ -21,7 +21,7 @@ import yaml
 from apscheduler.triggers.cron import CronTrigger
 from croniter import croniter
 
-from con_pilot.logger import app_logger
+from con_pilot.runtime.logger import app_logger
 
 log = app_logger.bind(module=__name__)
 

@@ -22,8 +22,8 @@ Usage
 import argparse
 import os
 
-from con_pilot.logger import setup_file_logging
-from con_pilot.observability import init_sentry
+from con_pilot.runtime.logger import setup_file_logging
+from con_pilot.runtime.observability import init_sentry
 
 
 def _setup_logging() -> None:

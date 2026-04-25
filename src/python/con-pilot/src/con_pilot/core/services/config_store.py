@@ -16,9 +16,9 @@ import yaml
 from pydantic import BaseModel, Field
 
 from con_pilot.core.models.config import ConductorConfig
-from con_pilot.logger import app_logger
+from con_pilot.runtime.logger import app_logger
 
-from con_pilot.paths import PathResolver
+from con_pilot.core.paths import PathResolver
 
 log = app_logger.bind(module=__name__)
 

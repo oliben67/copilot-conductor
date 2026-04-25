@@ -5,7 +5,7 @@ from importlib.metadata import version
 
 from fastapi import APIRouter, Request
 
-from con_pilot.session_id import SessionIdField
+from con_pilot.security.session_id import SessionIdField
 
 router = APIRouter(tags=["health"])
 

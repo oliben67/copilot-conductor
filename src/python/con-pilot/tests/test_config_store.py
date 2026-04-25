@@ -12,7 +12,7 @@ from con_pilot.core.services.config_store import (
     VersionExistsError,
     VersionNotFoundError,
 )
-from con_pilot.models import ConductorConfig
+from con_pilot.core.models import ConductorConfig
 
 # ── Minimal config shared across tests ───────────────────────────────────────
 

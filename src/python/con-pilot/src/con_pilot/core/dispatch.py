@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from con_pilot.logger import app_logger
+from con_pilot.runtime.logger import app_logger
 
 if TYPE_CHECKING:
     from con_pilot.conductor import ConPilot

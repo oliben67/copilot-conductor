@@ -14,8 +14,8 @@ import yaml
 
 from con_pilot.conductor import ConPilot
 from con_pilot.main import main
-from con_pilot.models import ConductorConfig, CronConfig
-from con_pilot.paths import PathResolver
+from con_pilot.core.models import ConductorConfig, CronConfig
+from con_pilot.core.paths import PathResolver
 
 # ── Minimal conductor.json shared across all tests ───────────────────────────
 

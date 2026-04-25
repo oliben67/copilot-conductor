@@ -18,8 +18,8 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 
-from con_pilot.logger import app_logger
-from con_pilot.paths import resolve_key_file
+from con_pilot.runtime.logger import app_logger
+from con_pilot.core.paths import resolve_key_file
 
 log = app_logger.bind(module=__name__)
 

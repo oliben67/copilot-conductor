@@ -10,10 +10,10 @@ import json
 import os
 from typing import TYPE_CHECKING
 
-from con_pilot.logger import app_logger
+from con_pilot.runtime.logger import app_logger
 
 if TYPE_CHECKING:
-    from con_pilot.paths import PathResolver
+    from con_pilot.core.paths import PathResolver
 
 log = app_logger.bind(module=__name__)
 

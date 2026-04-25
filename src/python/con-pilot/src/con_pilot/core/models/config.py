@@ -8,7 +8,7 @@ from typing import ClassVar, Literal, Self
 from croniter import croniter
 from pydantic import BaseModel, Field, field_validator
 
-from con_pilot.exceptions import AgentNamingPatternException
+from con_pilot.runtime.exceptions import AgentNamingPatternException
 
 
 class Permission(StrEnum):

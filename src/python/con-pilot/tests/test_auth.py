@@ -2,12 +2,12 @@
 
 import pytest
 
-from con_pilot.auth import (
+from con_pilot.security.auth import (
     GitHubToken,
     clear_token_cache,
     resolve_github_token,
 )
-from con_pilot.exceptions import TokenConflictError, TokenNotFoundError
+from con_pilot.runtime.exceptions import TokenConflictError, TokenNotFoundError
 
 
 class TestGitHubToken:

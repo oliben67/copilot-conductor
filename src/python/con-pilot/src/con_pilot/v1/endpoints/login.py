@@ -3,9 +3,9 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, model_validator
 
-from con_pilot.jwt_auth import check_credentials, issue_token, verify_token
-from con_pilot.logger import app_logger
-from con_pilot.session_id import SessionIdField
+from con_pilot.security.jwt_auth import check_credentials, issue_token, verify_token
+from con_pilot.runtime.logger import app_logger
+from con_pilot.security.session_id import SessionIdField
 
 log = app_logger.bind(module=__name__)
 

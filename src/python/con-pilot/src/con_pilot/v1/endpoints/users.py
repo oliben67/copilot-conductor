@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator
 
-from con_pilot.logger import app_logger
-from con_pilot.paths import resolve_key_file
-from con_pilot.users import create_user
+from con_pilot.runtime.logger import app_logger
+from con_pilot.core.paths import resolve_key_file
+from con_pilot.security.users import create_user
 
 log = app_logger.bind(module=__name__)
 

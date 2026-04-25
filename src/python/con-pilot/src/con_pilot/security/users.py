@@ -22,7 +22,7 @@ import secrets
 import threading
 from dataclasses import asdict, dataclass
 
-from con_pilot.logger import app_logger
+from con_pilot.runtime.logger import app_logger
 
 log = app_logger.bind(module=__name__)
 

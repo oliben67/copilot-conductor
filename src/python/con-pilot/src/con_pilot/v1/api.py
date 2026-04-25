@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
 
-from con_pilot.logger import app_logger
+from con_pilot.runtime.logger import app_logger
 
 from con_pilot.v1.endpoints import (
     agents_router,
@@ -171,7 +171,7 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
         app.state.dispatcher = None
         if copilot_service is not None:
             try:
-                from con_pilot.dispatch import PendingDispatcher
+                from con_pilot.core.dispatch import PendingDispatcher
 
                 dispatcher = PendingDispatcher(pilot, copilot_service)
                 pilot._dispatcher = dispatcher

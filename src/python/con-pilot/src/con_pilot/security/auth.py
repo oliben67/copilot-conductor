@@ -9,7 +9,7 @@ different values, the service fails immediately.
 import os
 from dataclasses import dataclass
 
-from con_pilot.exceptions import TokenConflictError, TokenNotFoundError
+from con_pilot.runtime.exceptions import TokenConflictError, TokenNotFoundError
 
 
 @dataclass(frozen=True)

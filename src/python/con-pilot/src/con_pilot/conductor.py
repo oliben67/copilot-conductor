@@ -20,11 +20,11 @@ import yaml
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from con_pilot.auth import (
+from con_pilot.security.auth import (
     GitHubToken,
     resolve_github_token,
 )
-from con_pilot.models import (
+from con_pilot.core.models import (
     AgentDetailResponse,
     AgentListResponse,
     Conductor,
@@ -32,9 +32,9 @@ from con_pilot.models import (
     ValidationError,
     ValidationResult,
 )
-from con_pilot.paths import PathResolver
-from con_pilot.logger import app_logger
-from con_pilot.trust import TrustRegistry
+from con_pilot.core.paths import PathResolver
+from con_pilot.runtime.logger import app_logger
+from con_pilot.core.trust import TrustRegistry
 from con_pilot._facets.agents import AgentsFacet
 from con_pilot._facets.cron import CronFacet
 

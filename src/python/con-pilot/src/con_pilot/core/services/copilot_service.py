@@ -15,7 +15,7 @@ are spawned by the conductor using the tools provided here.
 import asyncio
 from typing import Any, Callable
 
-from con_pilot.exceptions import PermissionHandlerMissingException
+from con_pilot.runtime.exceptions import PermissionHandlerMissingException
 from pydantic import BaseModel, Field
 
 from con_pilot.conductor import ConPilot
@@ -25,7 +25,7 @@ from copilot.generated.session_events import PermissionRequest
 from copilot.session import PermissionHandler, PermissionRequestResult
 
 from con_pilot.core.models import Agent, AgentConfig, AgentPermissions
-from con_pilot.logger import app_logger
+from con_pilot.runtime.logger import app_logger
 
 log = app_logger.bind(module=__name__, component="CopilotAgentService")
 
