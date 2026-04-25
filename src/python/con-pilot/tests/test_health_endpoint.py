@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from con_pilot.v1.endpoints.health import router
+from con_pilot.health.router import router
 
 
 class _ServiceReady:

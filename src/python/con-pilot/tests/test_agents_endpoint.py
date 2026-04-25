@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from con_pilot.conductor import ConPilot
-from con_pilot.core.models import AgentDetailResponse
-from con_pilot.v1.endpoints.agents import (
+from con_pilot.conductor.models import AgentDetailResponse
+from con_pilot.agents.router import (
     AgentConfigModifyRequest,
     get_agent,
     get_agent_config,

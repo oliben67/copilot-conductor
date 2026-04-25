@@ -17,7 +17,7 @@ import pytest
 from fastapi import HTTPException
 
 from con_pilot.conductor import ConPilot
-from con_pilot.v1.endpoints.agents import verify_admin_key
+from con_pilot.agents.router import verify_admin_key
 
 NULL_GUID = "00000000-0000-0000-0000-000000000000"
 

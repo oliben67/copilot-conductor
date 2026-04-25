@@ -8,11 +8,11 @@ import pytest
 import yaml
 
 from con_pilot.conductor import ConPilot
-from con_pilot.core.services.config_store import (
+from con_pilot.conductor.config_store import (
     VersionExistsError,
     VersionNotFoundError,
 )
-from con_pilot.core.models import ConductorConfig
+from con_pilot.conductor.models import ConductorConfig
 
 # ── Minimal config shared across tests ───────────────────────────────────────
 

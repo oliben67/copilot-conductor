@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from con_pilot.core.paths import resolve_key_file
+from con_pilot.conductor.paths import resolve_key_file
 
 # Resolve the con-pilot entry-point script from the same venv as the test runner.
 _BIN = Path(sys.executable).parent / "con-pilot"

@@ -3,7 +3,7 @@
 import pytest
 from fastapi import HTTPException
 
-from con_pilot.v1.endpoints.users import (
+from con_pilot.users.router import (
     ShowMeResponse,
     VerifyKeyRequest,
     VerifyKeyResponse,
@@ -16,7 +16,7 @@ def test_verify_key_endpoint_accepts_matching_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "con_pilot.v1.endpoints.users._read_install_key",
+        "con_pilot.users.router._read_install_key",
         lambda: b"expected-key",
     )
 
@@ -29,7 +29,7 @@ def test_verify_key_endpoint_rejects_non_matching_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "con_pilot.v1.endpoints.users._read_install_key",
+        "con_pilot.users.router._read_install_key",
         lambda: b"expected-key",
     )
 
