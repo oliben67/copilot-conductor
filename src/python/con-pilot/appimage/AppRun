@@ -45,4 +45,11 @@ fi
 
 printf '%s\n' "$CURRENT_WHEEL_HASH" > "$WHEEL_HASH_FILE"
 
+# Dev builds carry a `dev` marker at AppDir root. Export CONDUCTOR_ENV=DEV so
+# the runtime treats this install as a dev environment (e.g. null-GUID admin
+# key). Production builds leave CONDUCTOR_ENV untouched.
+if [ -f "$APPDIR/dev" ]; then
+  export CONDUCTOR_ENV="DEV"
+fi
+
 exec "$ENTRYPOINT" "$@"

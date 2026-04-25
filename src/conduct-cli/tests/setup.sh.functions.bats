@@ -134,6 +134,7 @@ EOF
 # ── show_key ──────────────────────────────────────────────────────────────────
 
 @test "show_key: creates key file with a non-empty UUID" {
+  [[ "${CONDUCTOR_ENV:-}" == "-dev" ]] && skip "dev build (CONDUCTOR_ENV=-dev): show_key not used"
   prepare_fake_appimage_runtime
 
   # Stub uuidgen
@@ -150,6 +151,7 @@ EOF
 }
 
 @test "show_key: key file has mode 600" {
+  [[ "${CONDUCTOR_ENV:-}" == "-dev" ]] && skip "dev build (CONDUCTOR_ENV=-dev): show_key not used"
   prepare_fake_appimage_runtime
 
   uuidgen() { echo "test-uuid-1234"; }
@@ -161,6 +163,7 @@ EOF
 }
 
 @test "show_key: prints ADMIN KEY to stdout" {
+  [[ "${CONDUCTOR_ENV:-}" == "-dev" ]] && skip "dev build (CONDUCTOR_ENV=-dev): show_key not used"
   prepare_fake_appimage_runtime
 
   uuidgen() { echo "test-uuid-abcd"; }
@@ -173,6 +176,7 @@ EOF
 }
 
 @test "show_key: falls back to /proc/sys/kernel/random/uuid when uuidgen missing" {
+  [[ "${CONDUCTOR_ENV:-}" == "-dev" ]] && skip "dev build (CONDUCTOR_ENV=-dev): show_key not used"
   prepare_fake_appimage_runtime
 
   # Stub uuidgen to force fallback path (cat /proc/sys/kernel/random/uuid).

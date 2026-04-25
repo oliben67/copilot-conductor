@@ -124,7 +124,7 @@ The self-extracting installer bundles the Flatpak, Taskfile, agent templates, an
 ./setup-0.4.0.sh uninstall
 ```
 
-On install, the admin key is displayed once and then erased. Save it — it's required for modifying system agents.
+On install, the admin key is displayed once and then erased. Save it — it's required for modifying system agents. The key is **not retrievable via the API** (no endpoint returns it); if you lose it, you must reinstall to generate a new one.
 
 ### From source (development)
 
@@ -600,7 +600,7 @@ All routes are mounted under `/api/v1` by default.
 | `GET`  | `/api/v1/validate`      | Validate the active config against the schema |
 | `POST` | `/api/v1/validate`      | Validate a supplied config payload            |
 
-Additional routes cover login, key verification, user creation, agents, project operations, config versions, and snapshots.
+Additional routes cover login, key verification (confirms a supplied key — the admin key itself is **never returned** by any endpoint), user creation, agents, project operations, config versions, and snapshots.
 
 ---
 

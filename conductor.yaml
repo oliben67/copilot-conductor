@@ -207,3 +207,23 @@ tasks:
       - agent_invoke
       - require_approval_destructive
       - trusted_directories_only
+
+  - name: agent-health-check
+    agent: conductor
+    description: Check the health of all other agents defined in the configuration
+    instructions: >-
+      Iterate over every agent defined in conductor.yaml (excluding the
+      conductor itself). For each active agent, verify that it is reachable
+      and responsive, confirm its configured model is authorized, and record
+      any unhealthy or unresponsive agents. Write a summary report to
+      `$CONDUCTOR_HOME/reports/agent-health-check-<UTC-timestamp>.md`
+      (create the `reports/` directory if missing) noting the status of each
+      agent and escalate persistent failures.
+    cron: "*/5 * * * *"
+    permissions:
+      - workspace_read
+      - codebase_context
+      - agent_invoke
+      - agent_manage
+      - file_create
+      - file_modify

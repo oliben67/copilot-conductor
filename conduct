@@ -14,7 +14,9 @@ API_URL="${BASE_URL}${API_PREFIX}"
 CON_PILOT_DEV_SHOW_ME=1
 unset _api_base _api_version
 
-# Lazy-load version from service (with 2s timeout) or fall back to VERSION file
+# Lazy-load version from service (with 2s timeout). The VERSION file is
+# intentionally NOT deployed in CONDUCTOR_HOME — the running service is the
+# single source of truth, and 'unknown' is shown when it is unreachable.
 _VERSION_CACHE=""
 get_version() {
   if [[ -z "$_VERSION_CACHE" ]]; then
@@ -24,9 +26,7 @@ get_version() {
     if [[ -n "$http_ver" ]]; then
       _VERSION_CACHE="$http_ver"
     else
-      _VERSION_CACHE="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null \
-        || cat "${CONDUCTOR_HOME:-$HOME/.conductor}/VERSION" 2>/dev/null \
-        || echo 'unknown')"
+      _VERSION_CACHE="unknown"
     fi
   fi
   echo "$_VERSION_CACHE"
@@ -48,6 +48,8 @@ Service commands:
   status                     Show whether con-pilot is running
   sync                       Trigger a one-shot sync cycle
   logs [-n N] [-f]           Show service logs (last 10 lines; -f to follow)
+  cron <subcommand>          Manage scheduled cron jobs (see 'conduct cron --help')
+  tasks <subcommand>         Manage tasks defined in conductor.yaml (see 'conduct tasks --help')
   agents show --all [-f]     List all agents (-f JSON indent=2)
   agents show <name> [-f]    Show details for a single agent (-f JSON indent=2)
   agents config show [name] [-j]
@@ -339,6 +341,102 @@ Examples:
 EOF
 }
 
+usage_cron() {
+  cat <<EOF
+conduct cron — Manage scheduled cron jobs
+
+Usage:
+  conduct cron list [-j]
+  conduct cron show <name> [-j]
+  conduct cron logs [-n LINES] [--project NAME] [-j]
+  conduct cron add --name NAME --agent ROLE --description TEXT \\
+                   --instructions TEXT [--cron EXPR] \\
+                   [--create-on-ping true|false] \\
+                   [--permissions "perm1,perm2"] \\
+                   --key KEY [-j]
+  conduct cron modify <name> [--agent ROLE] [--description TEXT] \\
+                      [--instructions TEXT] [--cron EXPR] \\
+                      [--create-on-ping true|false] \\
+                      [--permissions "perm1,perm2"] \\
+                      --key KEY [-j]
+  conduct cron remove <name> --key KEY
+
+Subcommands:
+  list       Show all configured tasks and their scheduler state
+  show       Show a single task by name
+  logs       Tail the cron pending.log
+  add        Register a new task in conductor config and refresh the scheduler
+  modify     Update mutable fields on an existing task
+  remove     Delete a task and unregister its scheduler job
+
+Options:
+  -j, --json           Output raw JSON response (default is human-readable)
+  --key KEY            Admin key (required for add/modify/remove)
+  --help, -h           Show this help message
+
+Examples:
+  conduct cron list
+  conduct cron show agent-health-check
+  conduct cron logs -n 50
+  conduct cron add --name nightly-report --agent conductor \\
+    --description "Summarise nightly activity" \\
+    --instructions "Write a markdown digest to reports/" \\
+    --cron "0 2 * * *" --key \$ADMIN_KEY
+  conduct cron modify agent-health-check --cron "*/15 * * * *" --key \$ADMIN_KEY
+  conduct cron remove nightly-report --key \$ADMIN_KEY
+EOF
+}
+
+usage_tasks() {
+  cat <<EOF
+conduct tasks — Manage tasks defined in conductor.yaml
+
+Usage:
+  conduct tasks list [--agent ROLE] [--scheduled true|false] [-j]
+  conduct tasks show <name> [-j]
+  conduct tasks add --name NAME --agent ROLE --description TEXT \\
+                    --instructions TEXT [--cron EXPR] \\
+                    [--create-on-ping true|false] \\
+                    [--permissions "perm1,perm2"] \\
+                    --key KEY [-j]
+  conduct tasks modify <name> [--agent ROLE] [--description TEXT] \\
+                       [--instructions TEXT] [--cron EXPR] \\
+                       [--create-on-ping true|false] \\
+                       [--permissions "perm1,perm2"] \\
+                       --key KEY [-j]
+  conduct tasks remove <name> --key KEY
+  conduct tasks run <name> --key KEY [-j]
+  conduct tasks dispatcher-status [-j]
+  conduct tasks dispatcher-drain --key KEY [-j]
+
+Subcommands:
+  list                  Show all configured tasks (cron and manual). Filter with --agent/--scheduled
+  show                  Show a single task by name
+  add                   Register a new task (with or without cron)
+  modify                Update mutable fields on an existing task
+  remove                Delete a task and unregister any scheduler job
+  run                   Manually queue a task (cron or manual) into pending.log
+  dispatcher-status     Show the live pending-task dispatcher state
+  dispatcher-drain      Force one drain pass of pending.log into the conductor session
+
+Options:
+  --agent ROLE         Filter list by agent role (only for 'list')
+  --scheduled BOOL     Filter list by scheduled flag (only for 'list')
+  -j, --json           Output raw JSON response (default is human-readable)
+  --key KEY            Admin key (required for add/modify/remove/run)
+  --help, -h           Show this help message
+
+Examples:
+  conduct tasks list
+  conduct tasks list --agent reviewer --scheduled false
+  conduct tasks show git-sync
+  conduct tasks add --name backup --agent conductor \\
+    --description "Daily backup" --instructions "Snapshot dbs" --key \$ADMIN_KEY
+  conduct tasks run git-sync --key \$ADMIN_KEY
+  conduct tasks remove backup --key \$ADMIN_KEY
+EOF
+}
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 print_json_pretty() {
@@ -427,6 +525,48 @@ api_patch_status_with_key() {
   return 1
 }
 
+api_post_status_with_key() {
+  local endpoint="$1" body="$2" key="$3" out http_status resp
+  for url in "${API_URL}${endpoint}" "${BASE_URL}${endpoint}" "${BASE_URL}/v1${endpoint}"; do
+    out="$(curl -s --connect-timeout 2 --max-time 10 -X POST "$url" \
+      -H "Content-Type: application/json" \
+      -H "X-Admin-Key: ${key}" \
+      -d "$body" \
+      -w '\n%{http_code}' 2>/dev/null)" || true
+    http_status="${out##*$'\n'}"
+    resp="${out%$'\n'*}"
+    if [[ "$http_status" =~ ^[2-9][0-9][0-9]$ ]]; then
+      printf '%s\n%s' "$http_status" "$resp"
+      return 0
+    elif [[ "$http_status" =~ ^[0-9]+$ && "$http_status" != "000" ]]; then
+      printf '%s\n%s' "$http_status" "$resp"
+      return 1
+    fi
+  done
+  printf '000\n'
+  return 1
+}
+
+api_delete_status_with_key() {
+  local endpoint="$1" key="$2" out http_status resp
+  for url in "${API_URL}${endpoint}" "${BASE_URL}${endpoint}" "${BASE_URL}/v1${endpoint}"; do
+    out="$(curl -s --connect-timeout 2 --max-time 10 -X DELETE "$url" \
+      -H "X-Admin-Key: ${key}" \
+      -w '\n%{http_code}' 2>/dev/null)" || true
+    http_status="${out##*$'\n'}"
+    resp="${out%$'\n'*}"
+    if [[ "$http_status" =~ ^[2-9][0-9][0-9]$ ]]; then
+      printf '%s\n%s' "$http_status" "$resp"
+      return 0
+    elif [[ "$http_status" =~ ^[0-9]+$ && "$http_status" != "000" ]]; then
+      printf '%s\n%s' "$http_status" "$resp"
+      return 1
+    fi
+  done
+  printf '000\n'
+  return 1
+}
+
 endpoint_spec() {
   case "$1" in
     health) echo "GET ${API_PREFIX}/health" ;;
@@ -441,6 +581,20 @@ endpoint_spec() {
     validate) echo "POST ${API_PREFIX}/validate" ;;
     sync) echo "POST ${API_PREFIX}/sync" ;;
     cron) echo "POST ${API_PREFIX}/cron" ;;
+    cron-jobs) echo "GET ${API_PREFIX}/cron/jobs" ;;
+    cron-job-detail) echo "GET ${API_PREFIX}/cron/jobs/{name}" ;;
+    cron-job-create) echo "POST ${API_PREFIX}/cron/jobs" ;;
+    cron-job-modify) echo "PATCH ${API_PREFIX}/cron/jobs/{name}" ;;
+    cron-job-delete) echo "DELETE ${API_PREFIX}/cron/jobs/{name}" ;;
+    cron-logs) echo "GET ${API_PREFIX}/cron/logs" ;;
+    tasks) echo "GET ${API_PREFIX}/tasks" ;;
+    task-detail) echo "GET ${API_PREFIX}/tasks/{name}" ;;
+    task-create) echo "POST ${API_PREFIX}/tasks" ;;
+    task-modify) echo "PATCH ${API_PREFIX}/tasks/{name}" ;;
+    task-delete) echo "DELETE ${API_PREFIX}/tasks/{name}" ;;
+    task-run) echo "POST ${API_PREFIX}/tasks/{name}/run" ;;
+    dispatcher-status) echo "GET ${API_PREFIX}/tasks/dispatcher/status" ;;
+    dispatcher-drain) echo "POST ${API_PREFIX}/tasks/dispatcher/drain" ;;
     register) echo "POST ${API_PREFIX}/register" ;;
     retire-project) echo "POST ${API_PREFIX}/retire-project" ;;
     replace) echo "POST ${API_PREFIX}/replace" ;;
@@ -493,6 +647,20 @@ cmd_end_points() {
     validate                  | POST ${API_PREFIX}/validate               | args: none                                   | body: {"project":"<name>"}
     sync                      | POST ${API_PREFIX}/sync                   | args: none                                   | body: none
     cron                      | POST ${API_PREFIX}/cron                   | args: none                                   | body: none
+    cron-jobs                 | GET  ${API_PREFIX}/cron/jobs              | args: none                                   | body: none
+    cron-job-detail           | GET  ${API_PREFIX}/cron/jobs/{name}       | args: name=<task-name>                       | body: none
+    cron-job-create           | POST ${API_PREFIX}/cron/jobs              | args: header X-Admin-Key:<key>               | body: {"name":"...","agent":"...","description":"...","instructions":"...","cron":"..."}
+    cron-job-modify           | PATCH ${API_PREFIX}/cron/jobs/{name}      | args: name=<task-name>, header X-Admin-Key:<key> | body: partial task fields
+    cron-job-delete           | DELETE ${API_PREFIX}/cron/jobs/{name}     | args: name=<task-name>, header X-Admin-Key:<key> | body: none
+    cron-logs                 | GET  ${API_PREFIX}/cron/logs              | args: ?lines=N&project=<name>                | body: none
+    tasks                     | GET  ${API_PREFIX}/tasks                  | args: ?agent=<role>&scheduled=true|false      | body: none
+    task-detail               | GET  ${API_PREFIX}/tasks/{name}           | args: name=<task-name>                       | body: none
+    task-create               | POST ${API_PREFIX}/tasks                  | args: header X-Admin-Key:<key>               | body: {"name":"...","agent":"...","description":"...","instructions":"...","cron":"<optional>"}
+    task-modify               | PATCH ${API_PREFIX}/tasks/{name}          | args: name=<task-name>, header X-Admin-Key:<key> | body: partial task fields
+    task-delete               | DELETE ${API_PREFIX}/tasks/{name}         | args: name=<task-name>, header X-Admin-Key:<key> | body: none
+    task-run                  | POST ${API_PREFIX}/tasks/{name}/run       | args: name=<task-name>, header X-Admin-Key:<key> | body: none
+    dispatcher-status         | GET  ${API_PREFIX}/tasks/dispatcher/status | args: none                                  | body: none
+    dispatcher-drain          | POST ${API_PREFIX}/tasks/dispatcher/drain  | args: header X-Admin-Key:<key>               | body: none
     register                  | POST ${API_PREFIX}/register               | args: none                                   | body: {"name":"<name>","directory":"<abs-path>"}
     retire-project            | POST ${API_PREFIX}/retire-project         | args: none                                   | body: {"name":"<name>"}
     replace                   | POST ${API_PREFIX}/replace                | args: none                                   | body: {"file":"<path>","role":"<role>","key":"<key>","project":"<optional>"}
@@ -640,18 +808,24 @@ cmd_status() {
     echo "con-pilot is NOT running (no response from ${BASE_URL})."
     exit 1
   fi
-  local status_val version_val
+  local status_val version_val notice_val
   status_val=$(printf '%s' "$health" | sed 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
   version_val=$(printf '%s' "$version_resp" | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-  # Fall back to VERSION file if the endpoint is absent (older Flatpak build)
+  notice_val=$(printf '%s' "$version_resp" | sed -n 's/.*"notice"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  # Fall back to 'unknown' if the endpoint is absent (older Flatpak build).
+  # Note: VERSION file is no longer deployed in CONDUCTOR_HOME.
   if [[ -z "$version_val" || "$version_val" == "$version_resp" ]]; then
-    version_val="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null \
-      || cat "${CONDUCTOR_HOME:-$HOME/.conductor}/VERSION" 2>/dev/null \
-      || echo 'unknown')"
+    version_val="unknown"
   fi
   echo "Status:  ${status_val:-unknown}"
   echo "Version: ${version_val:-unknown}"
   echo "URL:     ${BASE_URL}"
+  # Detect dev versions: -dev (informal), .dev / .devN (PEP 440), +dev (PEP 440 local).
+  if [[ "${version_val}" == *-dev || "${version_val}" == *.dev* || "${version_val}" == *+dev* ]]; then
+    echo "WARNING: this is a DEV BUILD (${version_val}); not for production use."
+  elif [[ -n "$notice_val" ]]; then
+    echo "Notice:  ${notice_val}"
+  fi
 }
 
 cmd_sync() {
@@ -1304,6 +1478,704 @@ cmd_admin() {
   esac
 }
 
+# ── Cron commands ─────────────────────────────────────────────────────────────
+
+_cron_print_job() {
+  local payload="$1"
+  if command -v jq >/dev/null 2>&1; then
+    echo "$payload" | jq -r '
+      "Task: \(.name)",
+      "------------------------------------------------------------",
+      "  Agent:        \(.agent)",
+      "  Description:  \(.description)",
+      "  Cron:         \(.cron // "[manual]")",
+      "  Scheduled:    \(if .scheduled then "yes" else "no" end)",
+      "  Registered:   \(if .registered then "yes" else "no" end)",
+      (if .next_run_time then "  Next run:     \(.next_run_time)" else empty end),
+      (if .create_on_ping then "  Create-on-ping: yes" else empty end),
+      (if (.permissions // []) | length > 0 then "  Permissions:  \(.permissions | join(", "))" else empty end),
+      "  Instructions:",
+      (.instructions | split("\n") | map("    " + .) | join("\n"))
+    '
+  else
+    echo "$payload"
+  fi
+}
+
+_cron_list() {
+  local json=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_cron; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+  local response
+  response="$(api_get "/cron/jobs")" || {
+    echo "Error: Could not reach con-pilot service at $BASE_URL" >&2
+    exit 1
+  }
+  if [[ -n "$json" ]]; then
+    print_json_pretty "$response"
+    return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "$response"
+    return
+  fi
+  echo "$response" | jq -r '
+    "Cron Jobs (\(.jobs | length)):",
+    "------------------------------------------------------------",
+    (.jobs[] |
+      "  \(if .registered then "●" elif .scheduled then "○" else "·" end) \(.name)  [\(.agent)]",
+      "      cron: \(.cron // "[manual]")\(if .next_run_time then "   next: \(.next_run_time)" else "" end)",
+      "      \(.description)"
+    )
+  '
+}
+
+_cron_show() {
+  local name="" json=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_cron; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      -*) echo "Unknown option: $1" >&2; exit 1 ;;
+      *)
+        if [[ -z "$name" ]]; then
+          name="$1"; shift
+        else
+          echo "Unexpected argument: $1" >&2; exit 1
+        fi
+        ;;
+    esac
+  done
+  if [[ -z "$name" ]]; then
+    echo "Usage: conduct cron show <name> [-j]" >&2
+    exit 1
+  fi
+  local api_out http_status response
+  api_out="$(api_get_status "/cron/jobs/${name}")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  case "$http_status" in
+    404) echo "Error: Cron job '${name}' not found" >&2; exit 1 ;;
+    000) echo "Error: Service unreachable at $BASE_URL" >&2; exit 1 ;;
+    2*) : ;;
+    *) echo "Error: request failed (HTTP ${http_status})" >&2; exit 1 ;;
+  esac
+  if [[ -n "$json" ]]; then
+    print_json_pretty "$response"
+  else
+    _cron_print_job "$response"
+  fi
+}
+
+_cron_logs() {
+  local json="" lines="" project=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_cron; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      -n)
+        if [[ $# -lt 2 ]]; then echo "Error: -n requires a value" >&2; exit 1; fi
+        lines="$2"; shift 2 ;;
+      --project)
+        if [[ $# -lt 2 ]]; then echo "Error: --project requires a value" >&2; exit 1; fi
+        project="$2"; shift 2 ;;
+      *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+  local qs=""
+  [[ -n "$lines" ]] && qs+="lines=${lines}"
+  if [[ -n "$project" ]]; then
+    [[ -n "$qs" ]] && qs+="&"
+    qs+="project=${project}"
+  fi
+  local endpoint="/cron/logs"
+  [[ -n "$qs" ]] && endpoint+="?${qs}"
+  local response
+  response="$(api_get "$endpoint")" || {
+    echo "Error: Could not reach con-pilot service at $BASE_URL" >&2
+    exit 1
+  }
+  if [[ -n "$json" ]]; then
+    print_json_pretty "$response"
+    return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "$response"
+    return
+  fi
+  echo "$response" | jq -r '
+    "Log file: \(.path)  (\(.total) total lines, showing \(.lines | length))",
+    "------------------------------------------------------------",
+    (.lines[]? // "(no entries)")
+  '
+}
+
+_cron_collect_fields() {
+  # Reads cron add/modify options into a JSON payload via jq.
+  # Usage: _cron_collect_fields <out-var> <include-required:true|false> -- "$@"
+  local __outvar="$1"; shift
+  local __require="$1"; shift
+  [[ "$1" == "--" ]] && shift
+  local set_name="" set_agent="" set_description="" set_instructions=""
+  local set_cron="" set_create_on_ping="" set_permissions=""
+  local name_pos=""
+  local json="" key=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_cron; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      --key)
+        if [[ $# -lt 2 ]]; then echo "Error: --key requires a value" >&2; exit 1; fi
+        key="$2"; shift 2 ;;
+      --name)
+        if [[ $# -lt 2 ]]; then echo "Error: --name requires a value" >&2; exit 1; fi
+        set_name="$2"; shift 2 ;;
+      --agent)
+        if [[ $# -lt 2 ]]; then echo "Error: --agent requires a value" >&2; exit 1; fi
+        set_agent="$2"; shift 2 ;;
+      --description)
+        if [[ $# -lt 2 ]]; then echo "Error: --description requires a value" >&2; exit 1; fi
+        set_description="$2"; shift 2 ;;
+      --instructions)
+        if [[ $# -lt 2 ]]; then echo "Error: --instructions requires a value" >&2; exit 1; fi
+        set_instructions="$2"; shift 2 ;;
+      --cron)
+        if [[ $# -lt 2 ]]; then echo "Error: --cron requires a value" >&2; exit 1; fi
+        set_cron="$2"; shift 2 ;;
+      --create-on-ping)
+        if [[ $# -lt 2 ]]; then echo "Error: --create-on-ping requires true|false" >&2; exit 1; fi
+        set_create_on_ping="$2"; shift 2 ;;
+      --permissions)
+        if [[ $# -lt 2 ]]; then echo "Error: --permissions requires a value" >&2; exit 1; fi
+        set_permissions="$2"; shift 2 ;;
+      -*)
+        echo "Unknown option: $1" >&2; exit 1 ;;
+      *)
+        if [[ -z "$name_pos" ]]; then
+          name_pos="$1"; shift
+        else
+          echo "Unexpected argument: $1" >&2; exit 1
+        fi
+        ;;
+    esac
+  done
+
+  if [[ -z "$key" ]]; then
+    echo "Error: --key is required" >&2
+    exit 1
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "Error: 'jq' is required for cron add/modify" >&2
+    exit 1
+  fi
+
+  local payload='{}'
+  if [[ -n "$set_name" ]]; then
+    payload="$(echo "$payload" | jq --arg v "$set_name" '. + {name:$v}')"
+  fi
+  if [[ -n "$set_agent" ]]; then
+    payload="$(echo "$payload" | jq --arg v "$set_agent" '. + {agent:$v}')"
+  fi
+  if [[ -n "$set_description" ]]; then
+    payload="$(echo "$payload" | jq --arg v "$set_description" '. + {description:$v}')"
+  fi
+  if [[ -n "$set_instructions" ]]; then
+    payload="$(echo "$payload" | jq --arg v "$set_instructions" '. + {instructions:$v}')"
+  fi
+  if [[ -n "$set_cron" ]]; then
+    payload="$(echo "$payload" | jq --arg v "$set_cron" '. + {cron:$v}')"
+  fi
+  if [[ -n "$set_create_on_ping" ]]; then
+    case "$set_create_on_ping" in
+      true|false)
+        payload="$(echo "$payload" | jq --argjson v "$set_create_on_ping" '. + {create_on_ping:$v}')" ;;
+      *) echo "Error: --create-on-ping must be true or false" >&2; exit 1 ;;
+    esac
+  fi
+  if [[ -n "$set_permissions" ]]; then
+    payload="$(echo "$payload" | jq --arg v "$set_permissions" '. + {permissions: ($v | split(",") | map(gsub("^ +| +$";"")) | map(select(length>0)))}')"
+  fi
+
+  # For modify, positional name is the target; ensure we pass it out too.
+  printf -v "$__outvar" '%s' "$payload"
+  # shellcheck disable=SC2034
+  CRON_FIELDS_NAME_POS="$name_pos"
+  # shellcheck disable=SC2034
+  CRON_FIELDS_JSON="$json"
+  # shellcheck disable=SC2034
+  CRON_FIELDS_KEY="$key"
+
+  if [[ "$__require" == "true" ]]; then
+    for req in name agent description instructions; do
+      if ! echo "$payload" | jq -e --arg k "$req" '.[$k] // empty' >/dev/null; then
+        echo "Error: --${req} is required" >&2
+        exit 1
+      fi
+    done
+  fi
+}
+
+_cron_add() {
+  local payload=""
+  _cron_collect_fields payload true -- "$@"
+  local api_out http_status response
+  api_out="$(api_post_status_with_key "/cron/jobs" "$payload" "$CRON_FIELDS_KEY")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  case "$http_status" in
+    200|201) : ;;
+    400|401|403|404|422)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+    000) echo "Error: Service unreachable at $BASE_URL" >&2; exit 1 ;;
+    *)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+  esac
+  if [[ -n "$CRON_FIELDS_JSON" ]]; then
+    print_json_pretty "$response"
+  else
+    _cron_print_job "$response"
+  fi
+}
+
+_cron_modify() {
+  local payload=""
+  _cron_collect_fields payload false -- "$@"
+  if [[ -z "$CRON_FIELDS_NAME_POS" ]]; then
+    echo "Usage: conduct cron modify <name> [fields] --key KEY" >&2
+    exit 1
+  fi
+  # Ensure at least one mutable field was provided.
+  if [[ "$payload" == "{}" ]]; then
+    echo "Error: no fields provided to modify" >&2
+    exit 1
+  fi
+  # 'name' is the URL, not a body field — strip if present.
+  payload="$(echo "$payload" | jq 'del(.name)')"
+  local api_out http_status response
+  api_out="$(api_patch_status_with_key "/cron/jobs/${CRON_FIELDS_NAME_POS}" "$payload" "$CRON_FIELDS_KEY")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  case "$http_status" in
+    200) : ;;
+    400|401|403|404|422)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+    000) echo "Error: Service unreachable at $BASE_URL" >&2; exit 1 ;;
+    *)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+  esac
+  if [[ -n "$CRON_FIELDS_JSON" ]]; then
+    print_json_pretty "$response"
+  else
+    _cron_print_job "$response"
+  fi
+}
+
+_cron_remove() {
+  local name="" key=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_cron; exit 0 ;;
+      --key)
+        if [[ $# -lt 2 ]]; then echo "Error: --key requires a value" >&2; exit 1; fi
+        key="$2"; shift 2 ;;
+      -*) echo "Unknown option: $1" >&2; exit 1 ;;
+      *)
+        if [[ -z "$name" ]]; then
+          name="$1"; shift
+        else
+          echo "Unexpected argument: $1" >&2; exit 1
+        fi
+        ;;
+    esac
+  done
+  if [[ -z "$name" ]]; then
+    echo "Usage: conduct cron remove <name> --key KEY" >&2
+    exit 1
+  fi
+  if [[ -z "$key" ]]; then
+    echo "Error: --key is required" >&2
+    exit 1
+  fi
+  local api_out http_status response
+  api_out="$(api_delete_status_with_key "/cron/jobs/${name}" "$key")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  case "$http_status" in
+    200|204) echo "Removed cron job '${name}'." ;;
+    404) echo "Error: Cron job '${name}' not found" >&2; exit 1 ;;
+    401|403)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+    000) echo "Error: Service unreachable at $BASE_URL" >&2; exit 1 ;;
+    *)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+  esac
+}
+
+cmd_cron() {
+  if [[ $# -eq 0 ]]; then
+    usage_cron
+    exit 0
+  fi
+  case "$1" in
+    -h|--help|help) usage_cron; exit 0 ;;
+  esac
+  local subcmd="$1"; shift
+  case "$subcmd" in
+    list)    _cron_list "$@" ;;
+    show)    _cron_show "$@" ;;
+    logs)    _cron_logs "$@" ;;
+    add)     _cron_add "$@" ;;
+    modify)  _cron_modify "$@" ;;
+    remove)  _cron_remove "$@" ;;
+    *)
+      echo "Unknown cron subcommand: $subcmd" >&2
+      usage_cron >&2
+      exit 1
+      ;;
+  esac
+}
+
+# ── Tasks command ─────────────────────────────────────────────────────────────
+
+_tasks_list() {
+  local json="" agent="" scheduled="" qs=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_tasks; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      --agent)
+        if [[ $# -lt 2 ]]; then echo "Error: --agent requires a value" >&2; exit 1; fi
+        agent="$2"; shift 2 ;;
+      --scheduled)
+        if [[ $# -lt 2 ]]; then echo "Error: --scheduled requires true|false" >&2; exit 1; fi
+        case "$2" in true|false) scheduled="$2" ;; *) echo "Error: --scheduled must be true or false" >&2; exit 1 ;; esac
+        shift 2 ;;
+      *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+  if [[ -n "$agent" ]]; then qs="agent=${agent}"; fi
+  if [[ -n "$scheduled" ]]; then qs="${qs:+${qs}&}scheduled=${scheduled}"; fi
+  local path="/tasks"
+  [[ -n "$qs" ]] && path="${path}?${qs}"
+  local response
+  response="$(api_get "$path")" || {
+    echo "Error: Could not reach con-pilot service at $BASE_URL" >&2
+    exit 1
+  }
+  if [[ -n "$json" ]]; then
+    print_json_pretty "$response"
+    return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "$response"
+    return
+  fi
+  echo "$response" | jq -r '
+    "Tasks (\(.tasks | length)):",
+    "------------------------------------------------------------",
+    (.tasks[] |
+      "  \(if .registered then "●" elif .scheduled then "○" else "·" end) \(.name)  [\(.agent)]",
+      "      cron: \(.cron // "[manual]")\(if .next_run_time then "   next: \(.next_run_time)" else "" end)",
+      "      \(.description)"
+    )
+  '
+}
+
+_tasks_show() {
+  local name="" json=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_tasks; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      -*) echo "Unknown option: $1" >&2; exit 1 ;;
+      *)
+        if [[ -z "$name" ]]; then name="$1"; shift
+        else echo "Unexpected argument: $1" >&2; exit 1; fi
+        ;;
+    esac
+  done
+  if [[ -z "$name" ]]; then
+    echo "Usage: conduct tasks show <name> [-j]" >&2
+    exit 1
+  fi
+  local api_out http_status response
+  api_out="$(api_get_status "/tasks/${name}")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  case "$http_status" in
+    200) : ;;
+    404) echo "Error: Task '${name}' not found" >&2; exit 1 ;;
+    000) echo "Error: Service unreachable at $BASE_URL" >&2; exit 1 ;;
+    *) echo "Error: request failed (HTTP ${http_status})" >&2
+       [[ -n "$response" ]] && echo "$response" >&2; exit 1 ;;
+  esac
+  if [[ -n "$json" ]]; then
+    print_json_pretty "$response"
+  else
+    _cron_print_job "$response"
+  fi
+}
+
+_tasks_add() {
+  local payload=""
+  _cron_collect_fields payload true -- "$@"
+  local api_out http_status response
+  api_out="$(api_post_status_with_key "/tasks" "$payload" "$CRON_FIELDS_KEY")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  case "$http_status" in
+    200|201) : ;;
+    400|401|403|404|422)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+    000) echo "Error: Service unreachable at $BASE_URL" >&2; exit 1 ;;
+    *)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+  esac
+  if [[ -n "$CRON_FIELDS_JSON" ]]; then
+    print_json_pretty "$response"
+  else
+    _cron_print_job "$response"
+  fi
+}
+
+_tasks_modify() {
+  local payload=""
+  _cron_collect_fields payload false -- "$@"
+  if [[ -z "$CRON_FIELDS_NAME_POS" ]]; then
+    echo "Usage: conduct tasks modify <name> [fields] --key KEY" >&2
+    exit 1
+  fi
+  if [[ "$payload" == "{}" ]]; then
+    echo "Error: no fields provided to modify" >&2
+    exit 1
+  fi
+  payload="$(echo "$payload" | jq 'del(.name)')"
+  local api_out http_status response
+  api_out="$(api_patch_status_with_key "/tasks/${CRON_FIELDS_NAME_POS}" "$payload" "$CRON_FIELDS_KEY")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  case "$http_status" in
+    200) : ;;
+    400|401|403|404|422)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+    000) echo "Error: Service unreachable at $BASE_URL" >&2; exit 1 ;;
+    *)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+  esac
+  if [[ -n "$CRON_FIELDS_JSON" ]]; then
+    print_json_pretty "$response"
+  else
+    _cron_print_job "$response"
+  fi
+}
+
+_tasks_remove() {
+  local name="" key=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_tasks; exit 0 ;;
+      --key)
+        if [[ $# -lt 2 ]]; then echo "Error: --key requires a value" >&2; exit 1; fi
+        key="$2"; shift 2 ;;
+      -*) echo "Unknown option: $1" >&2; exit 1 ;;
+      *)
+        if [[ -z "$name" ]]; then name="$1"; shift
+        else echo "Unexpected argument: $1" >&2; exit 1; fi
+        ;;
+    esac
+  done
+  if [[ -z "$name" ]]; then echo "Usage: conduct tasks remove <name> --key KEY" >&2; exit 1; fi
+  if [[ -z "$key" ]]; then echo "Error: --key is required" >&2; exit 1; fi
+  local api_out http_status response
+  api_out="$(api_delete_status_with_key "/tasks/${name}" "$key")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  case "$http_status" in
+    200|204) echo "Removed task '${name}'." ;;
+    404) echo "Error: Task '${name}' not found" >&2; exit 1 ;;
+    401|403)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+    000) echo "Error: Service unreachable at $BASE_URL" >&2; exit 1 ;;
+    *)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+  esac
+}
+
+_tasks_run() {
+  local name="" key="" json=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_tasks; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      --key)
+        if [[ $# -lt 2 ]]; then echo "Error: --key requires a value" >&2; exit 1; fi
+        key="$2"; shift 2 ;;
+      -*) echo "Unknown option: $1" >&2; exit 1 ;;
+      *)
+        if [[ -z "$name" ]]; then name="$1"; shift
+        else echo "Unexpected argument: $1" >&2; exit 1; fi
+        ;;
+    esac
+  done
+  if [[ -z "$name" ]]; then echo "Usage: conduct tasks run <name> --key KEY" >&2; exit 1; fi
+  if [[ -z "$key" ]]; then echo "Error: --key is required" >&2; exit 1; fi
+  local api_out http_status response
+  api_out="$(api_post_status_with_key "/tasks/${name}/run" "{}" "$key")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  case "$http_status" in
+    200|201|202) : ;;
+    404) echo "Error: Task '${name}' not found" >&2; exit 1 ;;
+    409)
+      echo "Error: Task '${name}' could not be queued" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+    401|403)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+    000) echo "Error: Service unreachable at $BASE_URL" >&2; exit 1 ;;
+    *)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+  esac
+  if [[ -n "$json" ]]; then
+    print_json_pretty "$response"
+  elif command -v jq >/dev/null 2>&1; then
+    echo "$response" | jq -r '"Queued task \(.task): \(.detail)"'
+  else
+    echo "$response"
+  fi
+}
+
+cmd_tasks() {
+  if [[ $# -eq 0 ]]; then
+    usage_tasks
+    exit 0
+  fi
+  case "$1" in
+    -h|--help|help) usage_tasks; exit 0 ;;
+  esac
+  local subcmd="$1"; shift
+  case "$subcmd" in
+    list)               _tasks_list "$@" ;;
+    show)               _tasks_show "$@" ;;
+    add)                _tasks_add "$@" ;;
+    modify)             _tasks_modify "$@" ;;
+    remove)             _tasks_remove "$@" ;;
+    run)                _tasks_run "$@" ;;
+    dispatcher-status)  _tasks_dispatcher_status "$@" ;;
+    dispatcher-drain)   _tasks_dispatcher_drain "$@" ;;
+    *)
+      echo "Unknown tasks subcommand: $subcmd" >&2
+      usage_tasks >&2
+      exit 1
+      ;;
+  esac
+}
+
+_tasks_dispatcher_status() {
+  local json=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_tasks; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+  local api_out http_status response
+  api_out="$(api_get_status "/tasks/dispatcher/status")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  case "$http_status" in
+    200) : ;;
+    503) echo "Error: dispatcher is not running" >&2; exit 1 ;;
+    000) echo "Error: Service unreachable at $BASE_URL" >&2; exit 1 ;;
+    *) echo "Error: request failed (HTTP ${http_status})" >&2
+       [[ -n "$response" ]] && echo "$response" >&2; exit 1 ;;
+  esac
+  if [[ -n "$json" ]] || ! command -v jq >/dev/null 2>&1; then
+    print_json_pretty "$response"
+  else
+    echo "$response" | jq -r '
+      "Pending Dispatcher",
+      "------------------------------------------------------------",
+      "  Running:        \(if .running then "yes" else "no" end)",
+      "  Processed:      \(.processed)",
+      "  Failed:         \(.failed)",
+      "  Skipped:        \(.skipped)",
+      "  Pending offset: \(.pending_offset) / \(.pending_size) bytes",
+      (if .last_run then "  Last run:       \(.last_run)" else empty end),
+      (if .last_error then "  Last error:     \(.last_error)" else empty end)
+    '
+  fi
+}
+
+_tasks_dispatcher_drain() {
+  local key="" json=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_tasks; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      --key)
+        if [[ $# -lt 2 ]]; then echo "Error: --key requires a value" >&2; exit 1; fi
+        key="$2"; shift 2 ;;
+      *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+  if [[ -z "$key" ]]; then echo "Error: --key is required" >&2; exit 1; fi
+  local api_out http_status response
+  api_out="$(api_post_status_with_key "/tasks/dispatcher/drain" "{}" "$key")" || true
+  http_status="$(echo "$api_out" | head -1)"
+  response="$(echo "$api_out" | tail -n +2)"
+  case "$http_status" in
+    200|201|202) : ;;
+    503) echo "Error: dispatcher is not running" >&2; exit 1 ;;
+    401|403)
+      echo "Error: request failed (HTTP ${http_status})" >&2
+      [[ -n "$response" ]] && echo "$response" >&2
+      exit 1 ;;
+    000) echo "Error: Service unreachable at $BASE_URL" >&2; exit 1 ;;
+    *) echo "Error: request failed (HTTP ${http_status})" >&2
+       [[ -n "$response" ]] && echo "$response" >&2; exit 1 ;;
+  esac
+  if [[ -n "$json" ]] || ! command -v jq >/dev/null 2>&1; then
+    print_json_pretty "$response"
+  else
+    echo "$response" | jq -r '"Drain: processed=\(.processed) failed=\(.failed) skipped=\(.skipped)"'
+  fi
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if [[ $# -eq 0 ]]; then
@@ -1317,13 +2189,21 @@ case "$1" in
   status)    shift; cmd_status "$@" ;;
   sync)      shift; cmd_sync "$@" ;;
   logs|log)  shift; cmd_logs "$@" ;;
+  cron)      shift; cmd_cron "$@" ;;
+  tasks)     shift; cmd_tasks "$@" ;;
   agents)    shift; cmd_agents "$@" ;;
   register)  shift; cmd_register "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
   end-points) shift; cmd_end_points "$@" ;;
   verify)    shift; cmd_verify "$@" ;;
   admin)     shift; cmd_admin "$@" ;;
-  version|--version|-v) v="$(get_version)"; echo "Conductor v${v}  (con-pilot v${v})" ;;
+  version|--version|-v)
+    v="$(get_version)"
+    echo "Conductor v${v}  (con-pilot v${v})"
+    if [[ "${v}" == *-dev || "${v}" == *.dev* || "${v}" == *+dev* ]]; then
+      echo "WARNING: this is a DEV BUILD (${v}); not for production use."
+    fi
+    ;;
   help|--help|-h) usage ;;
   *)
     echo "Unknown command: $1" >&2
