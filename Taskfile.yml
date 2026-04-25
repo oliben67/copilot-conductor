@@ -819,6 +819,21 @@ tasks:
         "{{.ROOT_DIR}}/conduct" version
         "{{.ROOT_DIR}}/conduct" status
 
+  start-dev:
+    desc: "Wipe any existing install ($CONDUCTOR_HOME/uninstall_conductor.sh), rebuild a dev AppImage, and install it."
+    cmds:
+      - |
+        set -e
+        UNINSTALL="{{.CONDUCTOR_HOME}}/uninstall_conductor.sh"
+        if [[ -x "$UNINSTALL" ]]; then
+          echo "Running $UNINSTALL …"
+          "$UNINSTALL"
+        else
+          echo "No $UNINSTALL found — skipping uninstall step."
+        fi
+      - task: build-dev
+      - task: install-dev
+
   # ── Release ─────────────────────────────────────────────────────────────────
 
   release:bump:
