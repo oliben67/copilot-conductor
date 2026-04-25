@@ -587,7 +587,7 @@ class AgentPermissions(BaseModel):
         """Return list of enabled permission names (True values only)."""
         return [
             field_name
-            for field_name in self.model_fields
+            for field_name in type(self).model_fields
             if getattr(self, field_name) is True
         ]
 
