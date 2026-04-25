@@ -90,102 +90,102 @@ def pilot(home: Path) -> ConPilot:
 
 class TestGetAgent:
     def test_returns_agent_by_role_key(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("developer")
+        result = pilot.agents.get("developer")
         assert isinstance(result, AgentDetailResponse)
         assert result.role == "developer"
 
     def test_returns_agent_by_display_name(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("code-monkey")
+        result = pilot.agents.get("code-monkey")
         assert result is not None
         assert result.role == "developer"
 
     def test_display_name_lookup_is_case_insensitive(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("CODE-MONKEY")
+        result = pilot.agents.get("CODE-MONKEY")
         assert result is not None
         assert result.role == "developer"
 
     def test_returns_none_for_unknown_name(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("nonexistent-agent")
+        result = pilot.agents.get("nonexistent-agent")
         assert result is None
 
     def test_includes_description(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("developer")
+        result = pilot.agents.get("developer")
         assert result is not None
         assert result.description == "Writes code."
 
     def test_includes_instructions(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("developer")
+        result = pilot.agents.get("developer")
         assert result is not None
         assert result.instructions == "You write clean Python."
 
     def test_includes_permissions(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("developer")
+        result = pilot.agents.get("developer")
         assert result is not None
         assert "file_create" in result.permissions
         assert "file_modify" in result.permissions
         assert "git_commit" in result.permissions
 
     def test_active_flag(self, pilot: ConPilot) -> None:
-        active = pilot.get_agent("developer")
+        active = pilot.agents.get("developer")
         assert active is not None
         assert active.active is True
 
-        inactive = pilot.get_agent("reviewer")
+        inactive = pilot.agents.get("reviewer")
         assert inactive is not None
         assert inactive.active is False
 
     def test_tasks_assigned_to_agent(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("developer")
+        result = pilot.agents.get("developer")
         assert result is not None
         task_names = {t.name for t in result.tasks}
         assert task_names == {"nightly-cleanup", "another-dev-task"}
 
     def test_tasks_for_reviewer_agent(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("reviewer")
+        result = pilot.agents.get("reviewer")
         assert result is not None
         assert len(result.tasks) == 1
         assert result.tasks[0].name == "daily-review"
         assert result.tasks[0].cron == "0 9 * * *"
 
     def test_no_tasks_for_conductor(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("conductor")
+        result = pilot.agents.get("conductor")
         assert result is not None
         assert result.tasks == []
 
     def test_file_exists_for_system_agent_with_file(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("developer")
+        result = pilot.agents.get("developer")
         assert result is not None
         assert result.file_exists is True
         assert result.file_path is not None
 
     def test_file_exists_false_for_missing_file(self, pilot: ConPilot) -> None:
         # reviewer has no .agent.md file created
-        result = pilot.get_agent("reviewer")
+        result = pilot.agents.get("reviewer")
         assert result is not None
         # reviewer is project-scoped — file_exists is False without project context
         assert result.file_exists is False
 
     def test_scope_returned(self, pilot: ConPilot) -> None:
-        sys_agent = pilot.get_agent("developer")
+        sys_agent = pilot.agents.get("developer")
         assert sys_agent is not None
         assert sys_agent.scope == "system"
 
-        proj_agent = pilot.get_agent("reviewer")
+        proj_agent = pilot.agents.get("reviewer")
         assert proj_agent is not None
         assert proj_agent.scope == "project"
 
     def test_sidekick_flag(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent("developer")
+        result = pilot.agents.get("developer")
         assert result is not None
         assert result.sidekick is True
 
     def test_list_agent_configs_returns_runtime_agents(self, pilot: ConPilot) -> None:
-        configs = pilot.list_agent_configs()
+        configs = pilot.agents.list_configs()
         assert "developer" in configs
         assert isinstance(configs["developer"], AgentDetailResponse)
 
     def test_get_agent_config_by_display_name(self, pilot: ConPilot) -> None:
-        result = pilot.get_agent_config("code-monkey")
+        result = pilot.agents.get_config("code-monkey")
         assert result is not None
         assert result.role == "developer"
         assert result.running is False
@@ -193,7 +193,7 @@ class TestGetAgent:
     def test_update_agent_config_persists_to_file(
         self, pilot: ConPilot, home: Path
     ) -> None:
-        updated = pilot.update_agent_config(
+        updated = pilot.agents.update_config(
             "developer",
             {"active": False, "model": "gpt-test", "description": "Updated desc"},
         )
@@ -210,7 +210,7 @@ class TestGetAgent:
     def test_update_agent_config_returns_none_for_unknown(
         self, pilot: ConPilot
     ) -> None:
-        updated = pilot.update_agent_config("ghost", {"active": True})
+        updated = pilot.agents.update_config("ghost", {"active": True})
         assert updated is None
 
 

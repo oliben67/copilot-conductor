@@ -27,7 +27,7 @@ def get_pilot() -> ConPilot:
 def setup_env(pilot: ConPilot = Depends(get_pilot)) -> dict:
     """Return session environment variables derived from conductor.json."""
     pilot = pilot or get_pilot()
-    result = pilot.resolve_project()
+    result = pilot.projects.resolve()
     if result:
         os.environ["PROJECT_NAME"] = result[0]
     env = dict(pilot.env)
@@ -40,7 +40,7 @@ def setup_env(pilot: ConPilot = Depends(get_pilot)) -> dict:
 def register(body: RegisterRequest, pilot: ConPilot = Depends(get_pilot)) -> dict:
     """Register a new project."""
     pilot = pilot or get_pilot()
-    pilot.register(body.name, body.directory)
+    pilot.projects.register(body.name, body.directory)
     return {"status": "ok"}
 
 
@@ -50,7 +50,7 @@ def retire_project(
 ) -> dict:
     """Retire a project."""
     pilot = pilot or get_pilot()
-    pilot.retire_project(body.name)
+    pilot.projects.retire(body.name)
     return {"status": "ok"}
 
 
@@ -58,7 +58,7 @@ def retire_project(
 def replace_agent(body: ReplaceRequest, pilot: ConPilot = Depends(get_pilot)) -> dict:
     """Replace agent body entirely with the content of an instructions file."""
     pilot = pilot or get_pilot()
-    pilot.replace_agent(body.file, body.role, body.project, body.key)
+    pilot.agents.replace(body.file, body.role, body.project, body.key)
     return {"status": "ok"}
 
 
@@ -66,5 +66,5 @@ def replace_agent(body: ReplaceRequest, pilot: ConPilot = Depends(get_pilot)) ->
 def reset_agent(body: ResetRequest, pilot: ConPilot = Depends(get_pilot)) -> dict:
     """Reset agent(s) to their template / default generated content."""
     pilot = pilot or get_pilot()
-    pilot.reset_agent(body.role, body.project, body.key)
+    pilot.agents.reset(body.role, body.project, body.key)
     return {"status": "ok"}

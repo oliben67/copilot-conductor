@@ -60,7 +60,7 @@ def list_agents(
 ) -> AgentListResponse:
     """List all agents and their status."""
     pilot = pilot or get_pilot()
-    return pilot.list_agents(project=project)
+    return pilot.agents.list(project=project)
 
 
 @router.get("/agents/config")
@@ -69,7 +69,7 @@ def list_agent_configs(
 ) -> dict[str, AgentDetailResponse]:
     """Return agent descriptions for all agents from the runtime singleton."""
     pilot = pilot or get_pilot()
-    return pilot.list_agent_configs()
+    return pilot.agents.list_configs()
 
 
 @router.get("/agents/config/{name}")
@@ -78,7 +78,7 @@ def get_agent_config(
 ) -> AgentDetailResponse:
     """Return agent description for one agent by role key or display name."""
     pilot = pilot or get_pilot()
-    result = pilot.get_agent_config(name)
+    result = pilot.agents.get_config(name)
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -106,7 +106,7 @@ def modify_agent_config(
         )
 
     try:
-        result = pilot.update_agent_config(name, changes)
+        result = pilot.agents.update_config(name, changes)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -125,7 +125,7 @@ def modify_agent_config(
 def get_agent(name: str, pilot: ConPilot = Depends(get_pilot)) -> AgentDetailResponse:
     """Return properties and assigned tasks for an agent by role key or display name."""
     pilot = pilot or get_pilot()
-    result = pilot.get_agent(name)
+    result = pilot.agents.get(name)
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

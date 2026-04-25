@@ -91,6 +91,14 @@ class ConPilot:
         self._config_store = ConfigStore(self._paths)
         self._snapshot_service = SnapshotService(self._paths)
 
+        # ── Service facades ────────────────────────────────────────────────
+        # Thin, stateless wrappers that group ConPilot methods by concern.
+        # They forward to the existing methods so Commit A introduces the
+        # new ergonomic call-site syntax with zero behaviour change.
+        self.agents = _AgentsAPI(self)
+        self.cron = _CronAPI(self)
+        self.projects = _ProjectsAPI(self)
+
     @property
     def config_store(self):
         """
@@ -2283,7 +2291,7 @@ class ConPilot:
         if dispatcher is not None:
             dispatcher.notify()
 
-    def cron(self, project: str | None = None) -> None:
+    def _cron_sweep(self, project: str | None = None) -> None:
         """
         Walk every active role and queue any cron jobs that are due.
 
@@ -2441,3 +2449,127 @@ def _run_persisted_task_job(conductor_home: str, task_name: str) -> None:
     """APScheduler job entrypoint that can be serialized in SQLAlchemyJobStore."""
     pilot = ConPilot(conductor_home=conductor_home, require_token=False)
     pilot._queue_task_from_scheduler(task_name)
+
+
+# ── Service facades ────────────────────────────────────────────────────────
+#
+# These classes group related ConPilot methods under a single attribute so
+# call sites read as ``pilot.agents.list()`` rather than
+# ``pilot.list_agents()``. They are thin and intentionally stateless:
+# every method delegates straight to ConPilot. A later commit will move the
+# implementations themselves into per-domain modules; the facade attribute
+# names locked in here are the public API.
+
+
+class _AgentsAPI:
+    """Agent CRUD operations grouped under ``ConPilot.agents``."""
+
+    def __init__(self, pilot: ConPilot) -> None:
+        self._pilot = pilot
+
+    def list(self, project: str | None = None) -> AgentListResponse:
+        return self._pilot.list_agents(project=project)
+
+    def list_configs(self) -> dict[str, AgentDetailResponse]:
+        return self._pilot.list_agent_configs()
+
+    def get(self, name: str) -> AgentDetailResponse | None:
+        return self._pilot.get_agent(name)
+
+    def get_config(self, name: str) -> AgentDetailResponse | None:
+        return self._pilot.get_agent_config(name)
+
+    def update_config(
+        self, name: str, changes: dict[str, Any]
+    ) -> AgentDetailResponse | None:
+        return self._pilot.update_agent_config(name, changes)
+
+    def amend(
+        self,
+        instructions_file: str,
+        role: str,
+        project: str | None = None,
+        key: str | None = None,
+    ) -> None:
+        return self._pilot.amend_agent(instructions_file, role, project, key)
+
+    def replace(
+        self,
+        instructions_file: str,
+        role: str,
+        project: str | None = None,
+        key: str | None = None,
+    ) -> None:
+        return self._pilot.replace_agent(instructions_file, role, project, key)
+
+    def reset(
+        self,
+        role: str,
+        project: str | None = None,
+        key: str | None = None,
+    ) -> None:
+        return self._pilot.reset_agent(role, project, key)
+
+
+class _CronAPI:
+    """Scheduling operations grouped under ``ConPilot.cron``.
+
+    The instance is also callable: ``pilot.cron()`` runs the cron sweep
+    (back-compat with the historical ``ConPilot.cron`` method).
+    """
+
+    def __init__(self, pilot: ConPilot) -> None:
+        self._pilot = pilot
+
+    def __call__(self, project: str | None = None) -> None:
+        return self._pilot._cron_sweep(project=project)
+
+    def list(self) -> list[dict[str, Any]]:
+        return self._pilot.list_cron_jobs()
+
+    def get(self, name: str) -> dict[str, Any] | None:
+        return self._pilot.get_cron_job(name)
+
+    def add(self, task_data: dict[str, Any]) -> dict[str, Any]:
+        return self._pilot.add_cron_job(task_data)
+
+    def update(
+        self, name: str, changes: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        return self._pilot.update_cron_job(name, changes)
+
+    def remove(self, name: str) -> bool:
+        return self._pilot.remove_cron_job(name)
+
+    def read_logs(
+        self, lines: int = 100, project: str | None = None
+    ) -> dict[str, Any]:
+        return self._pilot.read_cron_logs(lines=lines, project=project)
+
+    def run_task(self, name: str) -> bool:
+        return self._pilot.run_task(name)
+
+    async def start_scheduler(self) -> None:
+        await self._pilot.start_scheduler()
+
+    async def stop_scheduler(self) -> None:
+        await self._pilot.stop_scheduler()
+
+
+class _ProjectsAPI:
+    """Project lifecycle operations grouped under ``ConPilot.projects``."""
+
+    def __init__(self, pilot: ConPilot) -> None:
+        self._pilot = pilot
+
+    def register(self, name: str, directory: str) -> None:
+        return self._pilot.register(name, directory)
+
+    def retire(self, name: str) -> None:
+        return self._pilot.retire_project(name)
+
+    def resolve(self, cwd: str | None = None) -> tuple[str, str] | None:
+        return self._pilot.resolve_project(cwd=cwd)
+
+    def start_watcher(self) -> int:
+        return self._pilot.start_watcher()

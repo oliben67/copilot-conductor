@@ -184,19 +184,19 @@ class TestEnv:
 
 class TestListAgents:
     def test_lists_system_agents(self, pilot: ConPilot, home: Path) -> None:
-        result = pilot.list_agents()
+        result = pilot.agents.list()
         roles = {a.role for a in result.system_agents}
         assert "conductor" in roles
         assert "support" in roles
 
     def test_system_agent_file_exists(self, pilot: ConPilot, home: Path) -> None:
-        result = pilot.list_agents()
+        result = pilot.agents.list()
         conductor = next(a for a in result.system_agents if a.role == "conductor")
         assert conductor.file_exists is True
         assert conductor.file_path is not None
 
     def test_system_agent_file_missing(self, pilot: ConPilot, home: Path) -> None:
-        result = pilot.list_agents()
+        result = pilot.agents.list()
         support = next(a for a in result.system_agents if a.role == "support")
         # support.agent.md not created yet (no sync run)
         assert support.file_exists is False
@@ -211,8 +211,8 @@ class TestListAgents:
         # Register a project so trust.json has an entry
         proj = tmp_path / "myproj"
         proj.mkdir()
-        pilot.register("myproj", str(proj))
-        result = pilot.list_agents(project="myproj")
+        pilot.projects.register("myproj", str(proj))
+        result = pilot.agents.list(project="myproj")
         roles = {a.role for a in result.project_agents}
         assert "developer" in roles
         assert "reviewer" in roles
@@ -222,22 +222,22 @@ class TestListAgents:
     ) -> None:
         proj = tmp_path / "myproj"
         proj.mkdir()
-        pilot.register("myproj", str(proj))
-        result = pilot.list_agents(project="myproj")
+        pilot.projects.register("myproj", str(proj))
+        result = pilot.agents.list(project="myproj")
         # developer has max=2, so should have 2 entries
         dev_agents = [a for a in result.project_agents if a.role == "developer"]
         assert len(dev_agents) == 2
         assert {a.instance for a in dev_agents} == {1, 2}
 
     def test_returns_agent_info_fields(self, pilot: ConPilot, home: Path) -> None:
-        result = pilot.list_agents()
+        result = pilot.agents.list()
         conductor = next(a for a in result.system_agents if a.role == "conductor")
         assert conductor.name == "uppity"
         assert conductor.scope == "system"
         assert conductor.active is True
 
     def test_augmenting_flag_returned(self, pilot: ConPilot, home: Path) -> None:
-        result = pilot.list_agents()
+        result = pilot.agents.list()
         support = next(a for a in result.system_agents if a.role == "support")
         assert support.augmenting is True
         conductor = next(a for a in result.system_agents if a.role == "conductor")
@@ -382,7 +382,7 @@ class TestRegister:
     ) -> None:
         proj = tmp_path / "myapp"
         proj.mkdir()
-        pilot.register("myapp", str(proj))
+        pilot.projects.register("myapp", str(proj))
         assert (home / ".github" / "projects" / "myapp" / "agents").is_dir()
         assert (home / ".github" / "projects" / "myapp" / "cron").is_dir()
 
@@ -391,7 +391,7 @@ class TestRegister:
     ) -> None:
         proj = tmp_path / "myapp"
         proj.mkdir()
-        pilot.register("myapp", str(proj))
+        pilot.projects.register("myapp", str(proj))
         trust = json.loads((home / ".github" / "trust.json").read_text())
         assert trust.get("myapp") == str(proj)
 
@@ -400,7 +400,7 @@ class TestRegister:
     ) -> None:
         proj = tmp_path / "myapp"
         proj.mkdir()
-        pilot.register("myapp", str(proj))
+        pilot.projects.register("myapp", str(proj))
         p = home / ".github" / "projects" / "myapp" / "agents"
         assert (p / "developer.myapp.1.agent.md").exists()
         assert (p / "developer.myapp.2.agent.md").exists()
@@ -409,8 +409,8 @@ class TestRegister:
     def test_idempotent(self, pilot: ConPilot, home: Path, tmp_path: Path) -> None:
         proj = tmp_path / "myapp"
         proj.mkdir()
-        pilot.register("myapp", str(proj))
-        pilot.register("myapp", str(proj))  # second call must not raise
+        pilot.projects.register("myapp", str(proj))
+        pilot.projects.register("myapp", str(proj))  # second call must not raise
         trust = json.loads((home / ".github" / "trust.json").read_text())
         assert list(trust.keys()).count("myapp") == 1
 
@@ -422,14 +422,14 @@ class TestRetireProject:
     def _register(self, pilot: ConPilot, tmp_path: Path, name: str = "myapp") -> Path:
         proj = tmp_path / name
         proj.mkdir(exist_ok=True)
-        pilot.register(name, str(proj))
+        pilot.projects.register(name, str(proj))
         return proj
 
     def test_moves_project_dir(
         self, pilot: ConPilot, home: Path, tmp_path: Path
     ) -> None:
         self._register(pilot, tmp_path)
-        pilot.retire_project("myapp")
+        pilot.projects.retire("myapp")
         assert not (home / ".github" / "projects" / "myapp").exists()
         assert any((home / ".github" / "retired-projects").glob("myapp*"))
 
@@ -437,12 +437,12 @@ class TestRetireProject:
         self, pilot: ConPilot, home: Path, tmp_path: Path
     ) -> None:
         self._register(pilot, tmp_path)
-        pilot.retire_project("myapp")
+        pilot.projects.retire("myapp")
         trust = json.loads((home / ".github" / "trust.json").read_text())
         assert "myapp" not in trust
 
     def test_missing_project_dir_no_raise(self, pilot: ConPilot) -> None:
-        pilot.retire_project("nonexistent")  # should not raise
+        pilot.projects.retire("nonexistent")  # should not raise
 
     def test_collision_gets_timestamp_suffix(
         self, pilot: ConPilot, home: Path, tmp_path: Path
@@ -452,7 +452,7 @@ class TestRetireProject:
         retired_root.mkdir(parents=True, exist_ok=True)
         # Pre-place a directory at the target destination to force collision
         (retired_root / "myapp").mkdir()
-        pilot.retire_project("myapp")
+        pilot.projects.retire("myapp")
         # Original collision dir plus the new timestamped one
         matches = list(retired_root.glob("myapp*"))
         assert len(matches) == 2
@@ -478,7 +478,7 @@ class TestAmendAgent:
         self._sync_proj(pilot, monkeypatch)
         instr = tmp_path / "instr.md"
         instr.write_text("- Do A.\n- Do B.")
-        pilot.amend_agent(str(instr), "developer", "testproj")
+        pilot.agents.amend(str(instr), "developer", "testproj")
         content = (
             home
             / ".github"
@@ -500,9 +500,9 @@ class TestAmendAgent:
         self._sync_proj(pilot, monkeypatch)
         instr = tmp_path / "instr.md"
         instr.write_text("- Old.")
-        pilot.amend_agent(str(instr), "developer", "testproj")
+        pilot.agents.amend(str(instr), "developer", "testproj")
         instr.write_text("- New.")
-        pilot.amend_agent(str(instr), "developer", "testproj")
+        pilot.agents.amend(str(instr), "developer", "testproj")
         content = (
             home
             / ".github"
@@ -524,7 +524,7 @@ class TestAmendAgent:
         self._sync_proj(pilot, monkeypatch)
         instr = tmp_path / "instr.md"
         instr.write_text("- Write tests.")
-        pilot.amend_agent(str(instr), "developer", "testproj")
+        pilot.agents.amend(str(instr), "developer", "testproj")
         p = home / ".github" / "projects" / "testproj" / "agents"
         for i in (1, 2):
             assert (
@@ -537,7 +537,7 @@ class TestAmendAgent:
         instr.write_text("override.")
         key = pilot._load_or_generate_key()
         with pytest.raises(ValueError, match="conductor"):
-            pilot.amend_agent(str(instr), "conductor", key=key)
+            pilot.agents.amend(str(instr), "conductor", key=key)
 
     def test_system_agent_requires_key(
         self, pilot: ConPilot, home: Path, tmp_path: Path
@@ -548,7 +548,7 @@ class TestAmendAgent:
         instr = tmp_path / "i.md"
         instr.write_text("bad.")
         with pytest.raises(ValueError, match="system key"):
-            pilot.amend_agent(str(instr), "support")
+            pilot.agents.amend(str(instr), "support")
 
     def test_system_agent_with_correct_key(
         self, pilot: ConPilot, home: Path, tmp_path: Path
@@ -558,7 +558,7 @@ class TestAmendAgent:
         )
         instr = tmp_path / "i.md"
         instr.write_text("- Be helpful.")
-        pilot.amend_agent(str(instr), "support", key=pilot._load_or_generate_key())
+        pilot.agents.amend(str(instr), "support", key=pilot._load_or_generate_key())
         content = (
             home / ".github" / "system" / "agents" / "support.agent.md"
         ).read_text()
@@ -577,7 +577,7 @@ class TestAmendAgent:
 
         instr = tmp_path / "i.md"
         instr.write_text("- Be helpful from AppDir.")
-        pilot.amend_agent(str(instr), "support", key="appdir-test-key")
+        pilot.agents.amend(str(instr), "support", key="appdir-test-key")
 
         content = (
             home / ".github" / "system" / "agents" / "support.agent.md"
@@ -614,7 +614,7 @@ class TestReplaceAgent:
         pilot.sync()
         instr = tmp_path / "i.md"
         instr.write_text("## New Body\nAll new.")
-        pilot.replace_agent(str(instr), "reviewer", "testproj")
+        pilot.agents.replace(str(instr), "reviewer", "testproj")
         content = (
             home
             / ".github"
@@ -631,7 +631,7 @@ class TestReplaceAgent:
         instr = tmp_path / "i.md"
         instr.write_text("body.")
         with pytest.raises(ValueError, match="conductor"):
-            pilot.replace_agent(
+            pilot.agents.replace(
                 str(instr), "conductor", key=pilot._load_or_generate_key()
             )
 
@@ -644,7 +644,7 @@ class TestReplaceAgent:
         instr = tmp_path / "i.md"
         instr.write_text("body.")
         with pytest.raises(ValueError, match="system key"):
-            pilot.replace_agent(str(instr), "support")
+            pilot.agents.replace(str(instr), "support")
 
 
 # ── reset_agent ───────────────────────────────────────────────────────────────
@@ -662,8 +662,8 @@ class TestResetAgent:
         pilot.sync()
         instr = tmp_path / "i.md"
         instr.write_text("- Do X.")
-        pilot.amend_agent(str(instr), "developer", "testproj")
-        pilot.reset_agent("developer", "testproj")
+        pilot.agents.amend(str(instr), "developer", "testproj")
+        pilot.agents.reset("developer", "testproj")
         content = (
             home
             / ".github"
@@ -685,8 +685,8 @@ class TestResetAgent:
         pilot.sync()
         instr = tmp_path / "i.md"
         instr.write_text("- Custom.")
-        pilot.amend_agent(str(instr), "developer", "testproj")
-        pilot.reset_agent("developer", "testproj")
+        pilot.agents.amend(str(instr), "developer", "testproj")
+        pilot.agents.reset("developer", "testproj")
         p = home / ".github" / "projects" / "testproj" / "agents"
         for i in (1, 2):
             assert (
@@ -705,7 +705,7 @@ class TestResetAgent:
             '---\nname: "PLACEHOLDER"\nmodel: "PLACEHOLDER"\n---\n\n'
             "You are **PLACEHOLDER**, custom template body."
         )
-        pilot.reset_agent("developer", "testproj")
+        pilot.agents.reset("developer", "testproj")
         content = (
             home
             / ".github"
@@ -718,14 +718,14 @@ class TestResetAgent:
 
     def test_conductor_always_blocked(self, pilot: ConPilot) -> None:
         with pytest.raises(ValueError, match="conductor"):
-            pilot.reset_agent("conductor")
+            pilot.agents.reset("conductor")
 
     def test_system_agent_requires_key(self, pilot: ConPilot, home: Path) -> None:
         (home / ".github" / "system" / "agents" / "support.agent.md").write_text(
             '---\nname: "dogsbody"\nmodel: "test-model"\n---\n\n## Role\nSupport.'
         )
         with pytest.raises(ValueError, match="system key"):
-            pilot.reset_agent("support")
+            pilot.agents.reset("support")
 
 
 # ── CLI dispatch ─────────────────────────────────────────────────────────────
@@ -740,7 +740,7 @@ class TestCli:
 
     def test_cron(self, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "argv", ["con-pilot", "cron"])
-        with patch("con_pilot.conductor.ConPilot.cron") as mock:
+        with patch("con_pilot.conductor.ConPilot._cron_sweep") as mock:
             main()
         mock.assert_called_once()
 

@@ -161,7 +161,7 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
 
         # Start APScheduler cron service backed by SQLite under CONDUCTOR_HOME.
         try:
-            await pilot.start_scheduler()
+            await pilot.cron.start_scheduler()
             app.state.scheduler_startup_complete = True
         except Exception:
             app.state.scheduler_startup_error = "APScheduler startup failed"
@@ -215,7 +215,7 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
                 log.exception("CopilotAgentService shutdown failed")
 
         try:
-            await pilot.stop_scheduler()
+            await pilot.cron.stop_scheduler()
         except Exception:
             log.exception("APScheduler shutdown failed")
 

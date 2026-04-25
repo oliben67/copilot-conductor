@@ -106,14 +106,14 @@ class CronLogResponse(BaseModel):
 @router.get("/jobs", response_model=CronJobListResponse)
 def list_cron_jobs(pilot: ConPilot = Depends(get_pilot)) -> CronJobListResponse:
     """List every configured task with its scheduler state."""
-    jobs = [CronJobResponse(**job) for job in pilot.list_cron_jobs()]
+    jobs = [CronJobResponse(**job) for job in pilot.cron.list()]
     return CronJobListResponse(jobs=jobs)
 
 
 @router.get("/jobs/{name}", response_model=CronJobResponse)
 def get_cron_job(name: str, pilot: ConPilot = Depends(get_pilot)) -> CronJobResponse:
     """Return a single task by name."""
-    job = pilot.get_cron_job(name)
+    job = pilot.cron.get(name)
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -134,7 +134,7 @@ def create_cron_job(
     """Register a new task (with optional cron) and refresh the scheduler."""
     payload: dict[str, Any] = body.model_dump(exclude_none=True)
     try:
-        result = pilot.add_cron_job(payload)
+        result = pilot.cron.add(payload)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -160,7 +160,7 @@ def modify_cron_job(
             detail="No changes provided",
         )
     try:
-        result = pilot.update_cron_job(name, changes)
+        result = pilot.cron.update(name, changes)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -180,7 +180,7 @@ def modify_cron_job(
 )
 def delete_cron_job(name: str, pilot: ConPilot = Depends(get_pilot)) -> None:
     """Remove a task and unregister its APScheduler job."""
-    removed = pilot.remove_cron_job(name)
+    removed = pilot.cron.remove(name)
     if not removed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -195,4 +195,4 @@ def get_cron_logs(
     pilot: ConPilot = Depends(get_pilot),
 ) -> CronLogResponse:
     """Return the (optionally-trimmed) contents of the cron pending.log."""
-    return CronLogResponse(**pilot.read_cron_logs(lines=lines, project=project))
+    return CronLogResponse(**pilot.cron.read_logs(lines=lines, project=project))

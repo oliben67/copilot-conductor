@@ -123,14 +123,14 @@ def list_tasks(
     pilot: ConPilot = Depends(get_pilot),
 ) -> TaskListResponse:
     """List every configured task, optionally filtered by agent or scheduled flag."""
-    jobs = _filter_tasks(pilot.list_cron_jobs(), agent=agent, scheduled=scheduled)
+    jobs = _filter_tasks(pilot.cron.list(), agent=agent, scheduled=scheduled)
     return TaskListResponse(tasks=[TaskResponse(**job) for job in jobs])
 
 
 @router.get("/{name}", response_model=TaskResponse)
 def get_task(name: str, pilot: ConPilot = Depends(get_pilot)) -> TaskResponse:
     """Return a single task by name."""
-    job = pilot.get_cron_job(name)
+    job = pilot.cron.get(name)
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -151,7 +151,7 @@ def create_task(
     """Register a new task (with optional cron) and refresh the scheduler."""
     payload: dict[str, Any] = body.model_dump(exclude_none=True)
     try:
-        result = pilot.add_cron_job(payload)
+        result = pilot.cron.add(payload)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -177,7 +177,7 @@ def modify_task(
             detail="No changes provided",
         )
     try:
-        result = pilot.update_cron_job(name, changes)
+        result = pilot.cron.update(name, changes)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -197,7 +197,7 @@ def modify_task(
 )
 def delete_task(name: str, pilot: ConPilot = Depends(get_pilot)) -> None:
     """Remove a task and unregister any associated APScheduler job."""
-    if not pilot.remove_cron_job(name):
+    if not pilot.cron.remove(name):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Task '{name}' not found",
@@ -211,12 +211,12 @@ def delete_task(name: str, pilot: ConPilot = Depends(get_pilot)) -> None:
 )
 def run_task(name: str, pilot: ConPilot = Depends(get_pilot)) -> TaskRunResponse:
     """Manually queue a task into the cron pending.log."""
-    if pilot.get_cron_job(name) is None:
+    if pilot.cron.get(name) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Task '{name}' not found",
         )
-    queued = pilot.run_task(name)
+    queued = pilot.cron.run_task(name)
     if not queued:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

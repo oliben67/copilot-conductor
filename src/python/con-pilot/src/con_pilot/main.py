@@ -223,11 +223,11 @@ def main() -> None:
     elif args.command == "serve":
         pilot.serve(interval=args.interval)
     elif args.command == "register":
-        pilot.register(args.name, args.directory)
+        pilot.projects.register(args.name, args.directory)
     elif args.command == "retire-project":
-        pilot.retire_project(args.name)
+        pilot.projects.retire(args.name)
     elif args.command == "list-agents":
-        result = pilot.list_agents(project=args.project)
+        result = pilot.agents.list(project=args.project)
         if args.json:
             import json
 
@@ -297,11 +297,11 @@ def main() -> None:
                 raise SystemExit(1)
     # amend disabled — pending implementation
     # elif args.command == "amend":
-    #     pilot.amend_agent(args.file, args.role, args.project, args.key)
+    #     pilot.agents.amend(args.file, args.role, args.project, args.key)
     elif args.command == "replace":
-        pilot.replace_agent(args.file, args.role, args.project, args.key)
+        pilot.agents.replace(args.file, args.role, args.project, args.key)
     elif args.command == "reset":
-        pilot.reset_agent(args.role, args.project, args.key)
+        pilot.agents.reset(args.role, args.project, args.key)
 
 
 if __name__ == "__main__":
