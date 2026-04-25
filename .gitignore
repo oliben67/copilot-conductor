@@ -52,6 +52,7 @@ src/vscode/conduct-lectern/package-lock.json
 
 # dev only
 .dev-artefacts/
+*-dev/
 
 # SQLite databases (e.g. from tests or local development).
 # These may contain sensitive data and are not needed in version control.
