@@ -45,6 +45,96 @@ fi
 
 printf '%s\n' "$CURRENT_WHEEL_HASH" > "$WHEEL_HASH_FILE"
 
+# ── Pre-start cleanup (only when serving) ─────────────────────────────────────
+# Mirrors the logic in .vscode/clean.sh: kill stale con-pilot processes and
+# free the HTTP / debugpy ports before starting a fresh instance.
+
+_apprun_pids_on_port() {
+  _app_port="$1"
+  _app_pids=""
+  if command -v ss >/dev/null 2>&1; then
+    _ss=$(ss -tlnp "sport = :${_app_port}" 2>/dev/null \
+          | grep -oE 'pid=[0-9]+' | grep -oE '[0-9]+' | tr '\n' ' ') || true
+    _app_pids="${_app_pids}${_ss}"
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    _lsof4=$(lsof -ti "tcp:${_app_port}"  2>/dev/null | tr '\n' ' ') || true
+    _lsof6=$(lsof -ti "tcp6:${_app_port}" 2>/dev/null | tr '\n' ' ') || true
+    _app_pids="${_app_pids}${_lsof4}${_lsof6}"
+  fi
+  if command -v fuser >/dev/null 2>&1; then
+    _fuser=$(fuser "${_app_port}/tcp" 2>/dev/null | tr -s ' \t' ' ') || true
+    _app_pids="${_app_pids}${_fuser}"
+  fi
+  # filter to numeric PIDs only
+  printf '%s\n' "${_app_pids}" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' '
+}
+
+_apprun_free_port() {
+  _afp_port="$1"
+  _afp_label="$2"
+  _afp_pids=$(_apprun_pids_on_port "$_afp_port")
+  _afp_pids="${_afp_pids%% }"  # trim trailing space
+  if [ -n "$_afp_pids" ]; then
+    echo "[AppRun] port ${_afp_port} (${_afp_label}) held by PIDs: ${_afp_pids} — releasing…"
+    # shellcheck disable=SC2086
+    kill -TERM ${_afp_pids} 2>/dev/null || true
+    sleep 0.5
+    # shellcheck disable=SC2086
+    kill -KILL ${_afp_pids} 2>/dev/null || true
+  fi
+}
+
+if [ "${1:-}" = "serve" ]; then
+  echo "[AppRun] pre-start cleanup…"
+
+  # Resolve HTTP and debugpy ports
+  _http_port=8000
+  _dbpy_port="${CONDUCTOR_DEBUGPY_PORT:-5678}"
+  _cond_home="${CONDUCTOR_HOME:-$HOME/.conductor}"
+
+  if [ -f "${_cond_home}/.env" ]; then
+    _p=$("$VENV_PYTHON" -c "
+import tomllib, pathlib, os
+env = pathlib.Path(os.environ.get('CONDUCTOR_HOME', os.path.expanduser('~/.conductor'))) / '.env'
+try:
+    data = tomllib.loads(env.read_text())
+    p = data.get('con-pilot', {}).get('port')
+    if p: print(int(p))
+except Exception:
+    pass
+" 2>/dev/null) && [ -n "${_p:-}" ] && _http_port="$_p"
+  fi
+
+  echo "[AppRun]   HTTP port   : ${_http_port}"
+  echo "[AppRun]   debugpy port: ${_dbpy_port}"
+
+  # Phase 1 — kill by process name pattern (SIGTERM then SIGKILL)
+  for _pat in \
+      'con-pilot[.]AppImage serve' \
+      'con_pilot[.]main serve' \
+      'con_pilot[.]main' \
+      'uvicorn.*con_pilot' \
+      'python.*con.pilot'; do
+    pkill -f "$_pat" 2>/dev/null || true
+  done
+  sleep 0.5
+  for _pat in \
+      'con-pilot[.]AppImage serve' \
+      'con_pilot[.]main serve' \
+      'con_pilot[.]main' \
+      'uvicorn.*con_pilot' \
+      'python.*con.pilot'; do
+    pkill -KILL -f "$_pat" 2>/dev/null || true
+  done
+
+  # Phase 2 — free ports (catches any survivor holding IPv4 or IPv6)
+  _apprun_free_port "$_http_port" "con-pilot HTTP"
+  _apprun_free_port "$_dbpy_port" "debugpy"
+
+  echo "[AppRun] pre-start cleanup done."
+fi
+
 # Dev builds carry a `dev` marker at AppDir root. Export CONDUCTOR_ENV=DEV so
 # the runtime treats this install as a dev environment (e.g. null-GUID admin
 # key). Production builds leave CONDUCTOR_ENV untouched.
