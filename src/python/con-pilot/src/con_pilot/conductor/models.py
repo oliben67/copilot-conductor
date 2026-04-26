@@ -6,7 +6,8 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Callable, ClassVar, Literal, Self
+from typing import Any, ClassVar, Literal, Self
+from collections.abc import Callable
 
 from croniter import croniter
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -290,10 +291,6 @@ class InstancePolicy(BaseModel):
         """
         return self.effective_max > 1
 
-    def __iter__(self):
-        """Iterate over instance numbers that must be created (1 to min)."""
-        yield from self.creation_range()
-
 
 class AgentPermissions(BaseModel):
     """Granular permissions for an agent, modeled after GitHub Copilot Agent permissions.
@@ -457,7 +454,7 @@ class AgentPermissions(BaseModel):
     ]
 
     @classmethod
-    def set_permissions(cls, permission: bool, *fields: str) -> "AgentPermissions":
+    def set_permissions(cls, permission: bool, *fields: str) -> AgentPermissions:
         permissions = (
             {
                 **{
@@ -486,17 +483,17 @@ class AgentPermissions(BaseModel):
         return cls(**permissions)
 
     @classmethod
-    def all_permissions(cls) -> "AgentPermissions":
+    def all_permissions(cls) -> AgentPermissions:
         """Return a permissions object with all permissions enabled (for conductor)."""
         return cls.set_permissions(True)
 
     @classmethod
-    def none(cls) -> "AgentPermissions":
+    def none(cls) -> AgentPermissions:
         """Return a permissions object with all permissions disabled."""
         return cls.set_permissions(False)
 
     @classmethod
-    def read_only(cls) -> "AgentPermissions":
+    def read_only(cls) -> AgentPermissions:
         """Return a read-only permissions object (safest default)."""
         return cls.set_permissions(
             False,
@@ -508,7 +505,7 @@ class AgentPermissions(BaseModel):
         )
 
     @classmethod
-    def developer_default(cls) -> "AgentPermissions":
+    def developer_default(cls) -> AgentPermissions:
         """Default permissions for developer agents: coding with safety rails."""
         return cls.set_permissions(
             True,
@@ -522,12 +519,12 @@ class AgentPermissions(BaseModel):
         )
 
     @classmethod
-    def reviewer_default(cls) -> "AgentPermissions":
+    def reviewer_default(cls) -> AgentPermissions:
         """Default permissions for reviewer agents: read and comment only."""
         return cls.set_permissions(True, "git_pr_review", "agent_invoke")
 
     @classmethod
-    def git_agent_default(cls) -> "AgentPermissions":
+    def git_agent_default(cls) -> AgentPermissions:
         """Default permissions for git agents: version control operations."""
         return cls.set_permissions(
             True,
@@ -542,7 +539,7 @@ class AgentPermissions(BaseModel):
         )
 
     @classmethod
-    def tester_default(cls) -> "AgentPermissions":
+    def tester_default(cls) -> AgentPermissions:
         """Default permissions for tester agents: run tests, read code."""
         return cls.set_permissions(
             True,
@@ -555,7 +552,7 @@ class AgentPermissions(BaseModel):
         )
 
     @classmethod
-    def support_default(cls) -> "AgentPermissions":
+    def support_default(cls) -> AgentPermissions:
         """Default permissions for support/dogsbody agents: limited utility tasks."""
         return cls.set_permissions(
             True,
@@ -567,7 +564,7 @@ class AgentPermissions(BaseModel):
         )
 
     @classmethod
-    def agile_default(cls) -> "AgentPermissions":
+    def agile_default(cls) -> AgentPermissions:
         """Default permissions for agile agents: project management, not code changes."""
         return cls.set_permissions(
             True,
@@ -579,7 +576,7 @@ class AgentPermissions(BaseModel):
         )
 
     @classmethod
-    def arbitrator_default(cls) -> "AgentPermissions":
+    def arbitrator_default(cls) -> AgentPermissions:
         """Default permissions for arbitrator agents: resolve conflicts, limited actions."""
         return cls.set_permissions(True, "agent_invoke", "agent_manage")
 
@@ -596,7 +593,7 @@ class AgentPermissions(BaseModel):
         return [Permission(name) for name in self.to_list()]
 
     @classmethod
-    def from_list(cls, permissions: list[str | Permission]) -> "AgentPermissions":
+    def from_list(cls, permissions: list[str | Permission]) -> AgentPermissions:
         """Create permissions from a list of permission names or Permission enums.
 
         Args:
@@ -620,7 +617,7 @@ class AgentPermissions(BaseModel):
         return cls(**data)
 
     @classmethod
-    def for_role(cls, role: str) -> "AgentPermissions":
+    def for_role(cls, role: str) -> AgentPermissions:
         """Get default permissions for a given role."""
         role_defaults = {
             "conductor": cls.all_permissions,
@@ -758,7 +755,7 @@ class AgentConfig(BaseModel):
         return re.findall(AgentConfig.multiple_instances_naming_pattern, name)
 
     @classmethod
-    def create_multi(cls, info: dict) -> list["AgentConfig"]:
+    def create_multi(cls, info: dict) -> list[AgentConfig]:
         """Create multiple agent instances from a config with instance policy."""
         name_keys = cls._get_name_keys(info.get("name", ""))
         if not name_keys or "rank" not in name_keys:
@@ -775,7 +772,7 @@ class AgentConfig(BaseModel):
         if isinstance(instances, dict):
             instances = InstancePolicy(**instances)
         if not isinstance(instances, (InstancePolicy, type(None))):
-            raise ValueError(
+            raise TypeError(
                 "Agent config with multiple instances must include an 'instances' key"
                 " with an InstancePolicy value."
             )
@@ -945,7 +942,7 @@ class Agent(AgentConfig):
         name = self.name or self.role or ""
         try:
             return bool(checker(name))
-        except Exception:
+        except Exception:  # noqa: BLE001
             return False
 
     @model_validator(mode="after")
@@ -1044,3 +1041,15 @@ class Conductor(ConductorConfig):
         :rtype: `None`
         """
         cls._instance = None
+
+    @classmethod
+    def from_config(cls, config: ConductorConfig) -> Conductor:
+        """
+        Create a Conductor instance from an existing ConductorConfig.
+
+        :param config: The ConductorConfig to create the instance from.
+        :type config: `ConductorConfig`
+        :return: A new Conductor instance with the same data as the provided config.
+        :rtype: `Conductor`
+        """
+        return cls(**config.model_dump())

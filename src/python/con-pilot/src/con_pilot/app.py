@@ -23,6 +23,8 @@ from con_pilot.cron.router import router as cron_router
 from con_pilot.health.router import router as health_router
 from con_pilot.projects.router import router as projects_router
 from con_pilot.snapshots.router import router as snapshot_router
+from con_pilot.conductor.router import router as conductor_router
+from con_pilot.documents.router import router as documents_router
 from con_pilot.sync.router import router as sync_router
 from con_pilot.tasks.router import router as tasks_router
 from con_pilot.users.router import router as users_router
@@ -39,6 +41,7 @@ router = APIRouter()
 router.include_router(health_router)
 router.include_router(login_router)
 router.include_router(users_router)
+router.include_router(conductor_router)
 router.include_router(agents_router)
 router.include_router(config_router)
 router.include_router(snapshot_router)
@@ -47,6 +50,7 @@ router.include_router(cron_router)
 router.include_router(tasks_router)
 router.include_router(projects_router)
 router.include_router(validation_router)
+router.include_router(documents_router)
 
 
 def _normalize_segment(value: str) -> str:
@@ -102,6 +106,15 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
         app.state.scheduler_startup_complete = False
         app.state.scheduler_startup_error = None
 
+        # Initialize documents DB
+        import os
+        from con_pilot.documents.db import init_db as _init_documents_db
+        from con_pilot.documents.worker import init_worker as _init_document_worker
+        _docs_db_path = os.path.join(pilot.home, "documents.sqlite3")
+        _init_documents_db(_docs_db_path)
+        _document_worker = _init_document_worker(_docs_db_path)
+        await _document_worker.start()
+
         # Initialize config store and load all versions
         pilot.config_store.ensure_scores_dir()
         pilot.config_store.load_all()
@@ -132,7 +145,7 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
         pilot.snapshot_service.start_watcher(interval=60)
 
         log.debug("Ensuring system agent files exist")
-        pilot._ensure_system_agents()
+        pilot.ensure_system_agents()
         log.debug("System agent files ensured")
 
         # Start Copilot SDK service so conductor session exists at startup.
@@ -145,7 +158,7 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
             await copilot_service.start()
             app.state.copilot_startup_complete = bool(
                 getattr(copilot_service, "_client", None)
-                and getattr(copilot_service, "_conductor_session", None)
+                and getattr(copilot_service, "conductor_session", None)
             )
             if app.state.copilot_startup_complete:
                 log.info("CopilotAgentService startup complete")
@@ -197,6 +210,11 @@ def create_app(pilot: ConPilot, interval: int | None = None) -> FastAPI:
 
         # Cleanup: stop snapshot watcher
         pilot.snapshot_service.stop_watcher()
+
+        try:
+            await _document_worker.stop()
+        except Exception:
+            log.exception("DocumentWorker shutdown failed")
 
         if app.state.dispatcher is not None:
             try:
