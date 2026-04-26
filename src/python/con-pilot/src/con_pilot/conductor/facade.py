@@ -7,7 +7,6 @@ session-env resolution, watcher management, and HTTP service) lives here.
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -20,10 +19,6 @@ import yaml
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from con_pilot.auth.github_token import (
-    GitHubToken,
-    resolve_github_token,
-)
 from con_pilot.conductor.models import Conductor, ConductorConfig
 from con_pilot.conductor.responses import (
     AgentDetailResponse,
@@ -34,13 +29,15 @@ from con_pilot.conductor.responses import (
 from con_pilot.conductor.paths import PathResolver
 from con_pilot.logger import app_logger
 from con_pilot.conductor.trust import TrustRegistry
-from con_pilot.agents.service import AgentsFacet
-from con_pilot.cron.service import CronFacet
+from con_pilot.agents import service as _agents_service
+from con_pilot.agents.service import AgentsContext, expand_name
+from con_pilot.cron import service as _cron_service
+from con_pilot.cron.service import CronContext
 
 log = app_logger.bind(module=__name__)
 
 
-class ConPilot(AgentsFacet, CronFacet):
+class ConPilot:
     """
     Facade for all con-pilot operations.
 
@@ -63,9 +60,6 @@ class ConPilot(AgentsFacet, CronFacet):
     ) -> None:
         from con_pilot.conductor.config_store import ConfigStore
         from con_pilot.conductor.snapshot_service import SnapshotService
-
-        # Validate GitHub token first — fail fast if conflicting or missing
-        self._token: GitHubToken | None = resolve_github_token(required=require_token)
 
         self._paths = PathResolver(conductor_home)
         self._trust = TrustRegistry(self._paths)
@@ -103,20 +97,6 @@ class ConPilot(AgentsFacet, CronFacet):
         :rtype: `SnapshotService`
         """
         return self._snapshot_service
-
-    @property
-    def github_token(self) -> GitHubToken | None:
-        """
-        Return the resolved GitHub token used by the Copilot SDK.
-
-        Note:
-            Resolved from ``COPILOT_GITHUB_TOKEN``, ``GH_TOKEN`` or
-            ``GITHUB_TOKEN`` (in that order) at construction time.
-
-        :return: the GitHub token, or ``None`` when no environment variable is set.
-        :rtype: `GitHubToken | None`
-        """
-        return self._token
 
     @property
     def home(self) -> str:
@@ -628,14 +608,14 @@ class ConPilot(AgentsFacet, CronFacet):
         }
 
     def _service_config(self) -> tuple[str, int]:
-        """Read [con-pilot] host/port from $CONDUCTOR_HOME/.env (TOML). Falls back to localhost:8000."""
+        """Read [con-pilot] host/port from $CONDUCTOR_HOME/.env (TOML). Falls back to 127.0.0.1:8000."""
         env_path = Path(self.home) / ".env"
         if env_path.exists():
             with open(env_path, "rb") as f:
                 data = tomllib.load(f)
             section = data.get("con-pilot", {})
-            return str(section.get("host", "localhost")), int(section.get("port", 8000))
-        return "localhost", 8000
+            return str(section.get("host", "127.0.0.1")), int(section.get("port", 8000))
+        return "127.0.0.1", 8000
 
     # ── Session environment ─────────────────────────────────────────────────────
 
@@ -675,10 +655,10 @@ class ConPilot(AgentsFacet, CronFacet):
                 if role_cfg and role_cfg.name
                 else (conductor_name or "conductor")
             )
-            sidekick_name = self._expand_name(raw, project=project, rank=1)
+            sidekick_name = expand_name(raw, project=project, rank=1)
         elif len(sidekick_roles) == 1:
             raw = active[sidekick_roles[0]].name or sidekick_roles[0]
-            sidekick_name = self._expand_name(raw, project=project, rank=1)
+            sidekick_name = expand_name(raw, project=project, rank=1)
         else:
             sidekick_name = conductor_name or "conductor"
 
@@ -797,37 +777,6 @@ class ConPilot(AgentsFacet, CronFacet):
 
         log.warning("Could not determine project name for %s", directory)
         return None
-
-    # ── Agent name expansion ───────────────────────────────────────────────────
-
-    def _expand_name(
-        self, template: str, project: str | None = None, rank: int | None = None
-    ) -> str:
-        """
-        Expand name template placeholders.
-
-        Substitutions:
-                    [scope:project] → project name (or removed if no project)
-          [scope]         → scope name (or removed if no project)
-          [rank]          → instance number (or removed if no rank)
-          Any remaining [placeholder] tokens are stripped.
-        """
-        name = template
-        name = name.replace("[scope:project]", project or "")
-        name = name.replace("[scope]", project or "")
-        name = name.replace("[rank]", str(rank) if rank is not None else "")
-        # Strip any remaining bracketed placeholders
-        name = re.sub(r"\[.*?\]", "", name)
-        # Collapse multiple hyphens and strip leading/trailing ones
-        name = re.sub(r"-+", "-", name).strip("-")
-        log.debug(
-            "Expanded name template '%s' with project='%s' and rank='%s' to '%s'",
-            template,
-            project,
-            rank,
-            name,
-        )
-        return name
 
     def start_watcher(self) -> int:
         """
@@ -1045,19 +994,21 @@ class ConPilot(AgentsFacet, CronFacet):
             fname = f"{role}.agent.md"
             dest = os.path.join(self.system_agents_dir, fname)
             if os.path.exists(dest):
+                cfg_instructions = agent_cfg.get(role, {}).get("instructions")
+                if _agents_service.sync_instructions_section(dest, cfg_instructions):
+                    log.info("Updated instructions (system): %s", fname)
                 continue
             retired = os.path.join(self.system_retired_dir, fname)
             if os.path.exists(retired):
                 shutil.move(retired, dest)
                 log.info("Restored (system): %s", fname)
             else:
-                content = self._generate_agent_file(
+                content = _agents_service.generate_agent_file(
+                    self._agents_ctx(),
                     role,
                     {
                         **agent_cfg.get(role, {}),
-                        "name": self._expand_name(
-                            agent_cfg.get(role, {}).get("name", role)
-                        ),
+                        "name": expand_name(agent_cfg.get(role, {}).get("name", role)),
                     },
                     self.default_model,
                 )
@@ -1101,17 +1052,23 @@ class ConPilot(AgentsFacet, CronFacet):
                         fname = f"{role}.{project_name}.{i}.agent.md"
                         dest = os.path.join(p_agents, fname)
                         if os.path.exists(dest):
+                            cfg_instructions = role_cfg.get("instructions")
+                            if _agents_service.sync_instructions_section(dest, cfg_instructions):
+                                log.info("Updated instructions (project=%s): %s", project_name, fname)
                             continue
                         retired = os.path.join(p_retired, fname)
                         if os.path.exists(retired):
                             shutil.move(retired, dest)
                             log.info("Restored (project=%s): %s", project_name, fname)
                         else:
-                            expanded = self._expand_name(
+                            expanded = expand_name(
                                 name_tmpl, project=project_name, rank=i
                             )
-                            content = self._generate_agent_file(
-                                role, {**role_cfg, "name": expanded}, self.default_model
+                            content = _agents_service.generate_agent_file(
+                                self._agents_ctx(),
+                                role,
+                                {**role_cfg, "name": expanded},
+                                self.default_model,
                             )
                             with open(dest, "w") as f:
                                 f.write(content)
@@ -1125,22 +1082,28 @@ class ConPilot(AgentsFacet, CronFacet):
                     fname = f"{role}.{project_name}.agent.md"
                     dest = os.path.join(p_agents, fname)
                     if os.path.exists(dest):
+                        cfg_instructions = role_cfg.get("instructions")
+                        if _agents_service.sync_instructions_section(dest, cfg_instructions):
+                            log.info("Updated instructions (project=%s): %s", project_name, fname)
                         continue
                     retired = os.path.join(p_retired, fname)
                     if os.path.exists(retired):
                         shutil.move(retired, dest)
                         log.info("Restored (project=%s): %s", project_name, fname)
                     else:
-                        expanded = self._expand_name(name_tmpl, project=project_name)
-                        content = self._generate_agent_file(
-                            role, {**role_cfg, "name": expanded}, self.default_model
+                        expanded = expand_name(name_tmpl, project=project_name)
+                        content = _agents_service.generate_agent_file(
+                            self._agents_ctx(),
+                            role,
+                            {**role_cfg, "name": expanded},
+                            self.default_model,
                         )
                         with open(dest, "w") as f:
                             f.write(content)
                         log.info("Created (project=%s): %s", project_name, fname)
 
         if self._scheduler is not None and self._scheduler.running:
-            self._refresh_scheduled_task_jobs()
+            _cron_service.refresh_scheduled_task_jobs(self._cron_ctx())
 
         self.cron(project=project_name)
 
@@ -1177,7 +1140,7 @@ class ConPilot(AgentsFacet, CronFacet):
 
         Note:
             Host and port are read from ``$CONDUCTOR_HOME/.env`` under the
-            ``[con-pilot]`` table, defaulting to ``localhost:8000``. Logs are
+            ``[con-pilot]`` table, defaulting to ``127.0.0.1:8000``. Logs are
             routed through the project's loguru configuration.
 
         :param interval: optional sync-loop interval in seconds; defaults to
@@ -1231,6 +1194,142 @@ class ConPilot(AgentsFacet, CronFacet):
             },
         }
         uvicorn.run(app, host=host, port=port, log_config=log_config)
+
+    # ── Agents service forwarders ─────────────────────────────────────────
+    # The agent logic lives in ``con_pilot.agents.service`` as pure module
+    # functions. ConPilot only builds the explicit dependency context and
+    # forwards the call.
+
+    def _agents_ctx(self) -> AgentsContext:
+        return AgentsContext(
+            config_path=self.config_path,
+            system_agents_dir=self.system_agents_dir,
+            system_retired_dir=self.system_retired_dir,
+            system_logs_dir=self.system_logs_dir,
+            templates_dir=self.templates_dir,
+            default_model=self.default_model,
+            get_config=lambda: self.config,
+            reload_config=self.reload_config,
+            project_agents_dir=self.project_agents_dir,
+            load_trust=self._load_trust,
+            load_or_generate_key=self._load_or_generate_key,
+        )
+
+    def list_agents(self, project: str | None = None) -> AgentListResponse:
+        return _agents_service.list_agents(self._agents_ctx(), project=project)
+
+    def list_agent_configs(self) -> dict[str, AgentDetailResponse]:
+        return _agents_service.list_agent_configs(self._agents_ctx())
+
+    def get_agent(self, name: str) -> AgentDetailResponse | None:
+        return _agents_service.get_agent(self._agents_ctx(), name)
+
+    def get_agent_config(self, name: str) -> AgentDetailResponse | None:
+        return _agents_service.get_agent_config(self._agents_ctx(), name)
+
+    def update_agent_config(
+        self, name: str, changes: dict[str, Any]
+    ) -> AgentDetailResponse | None:
+        return _agents_service.update_agent_config(self._agents_ctx(), name, changes)
+
+    def amend_agent(
+        self,
+        instructions_file: str,
+        role: str,
+        project: str | None = None,
+        key: str | None = None,
+    ) -> None:
+        return _agents_service.amend_agent(
+            self._agents_ctx(), instructions_file, role, project, key
+        )
+
+    def replace_agent(
+        self,
+        instructions_file: str,
+        role: str,
+        project: str | None = None,
+        key: str | None = None,
+    ) -> None:
+        return _agents_service.replace_agent(
+            self._agents_ctx(), instructions_file, role, project, key
+        )
+
+    def reset_agent(
+        self,
+        role: str,
+        project: str | None = None,
+        key: str | None = None,
+    ) -> None:
+        return _agents_service.reset_agent(self._agents_ctx(), role, project, key)
+
+    def ensure_system_agents(self) -> None:
+        return _agents_service.ensure_system_agents(self._agents_ctx())
+
+    # ── Cron service forwarders ───────────────────────────────────────────
+    # The cron logic lives in ``con_pilot.cron.service`` as pure module
+    # functions. ConPilot only builds the explicit dependency context and
+    # forwards the call.
+
+    def _cron_ctx(self) -> CronContext:
+        def _clear_scheduler() -> None:
+            self._scheduler = None
+
+        return CronContext(
+            home=self.home,
+            config_path=self.config_path,
+            cron_dir=self.cron_dir,
+            cron_state_dir=self.cron_state_dir,
+            pending_log_path=self.pending_log,
+            scheduler_db_path=self.scheduler_db_path,
+            scheduler_lock=self._scheduler_lock,
+            get_config=lambda: self.config,
+            reload_config=self.reload_config,
+            get_scheduler=lambda: self.scheduler,
+            peek_scheduler=lambda: self._scheduler,
+            clear_scheduler=_clear_scheduler,
+            role_cron_root=self._role_cron_root,
+            project_cron_dir=self.project_cron_dir,
+            peek_dispatcher=lambda: self._dispatcher,
+        )
+
+    def _queue_task_from_scheduler(self, task_name: str) -> None:
+        return _cron_service.queue_task_from_scheduler(self._cron_ctx(), task_name)
+
+    def run_task(self, task_name: str) -> bool:
+        return _cron_service.run_task(self._cron_ctx(), task_name)
+
+    async def start_scheduler(self) -> None:
+        await _cron_service.start_scheduler(self._cron_ctx())
+
+    async def stop_scheduler(self) -> None:
+        await _cron_service.stop_scheduler(self._cron_ctx())
+
+    def list_cron_jobs(self) -> list[dict[str, Any]]:
+        return _cron_service.list_cron_jobs(self._cron_ctx())
+
+    def get_cron_job(self, name: str) -> dict[str, Any] | None:
+        return _cron_service.get_cron_job(self._cron_ctx(), name)
+
+    def add_cron_job(self, task_data: dict[str, Any]) -> dict[str, Any]:
+        return _cron_service.add_cron_job(self._cron_ctx(), task_data)
+
+    def update_cron_job(
+        self, name: str, changes: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        return _cron_service.update_cron_job(self._cron_ctx(), name, changes)
+
+    def remove_cron_job(self, name: str) -> bool:
+        return _cron_service.remove_cron_job(self._cron_ctx(), name)
+
+    def read_cron_logs(
+        self, *, lines: int | None = None, project: str | None = None
+    ) -> dict[str, Any]:
+        return _cron_service.read_cron_logs(
+            self._cron_ctx(), lines=lines, project=project
+        )
+
+    def _cron_sweep(self, project: str | None = None) -> None:
+        return _cron_service.cron_sweep(self._cron_ctx(), project=project)
 
 
 # ── Service facades ────────────────────────────────────────────────────────
