@@ -285,6 +285,17 @@ tasks:
         fi
         echo ""
 
+  setup-home:
+    desc: "Deploy conductor.yaml, conduct CLI, README, and .github/ into CONDUCTOR_HOME (no AppImage). Useful when running con-pilot from source under the debugger."
+    cmds:
+      - task: _install-env
+
+  setup-clean-home:
+    desc: "Remove deployed conductor.yaml, conduct CLI, README, and .github/ from CONDUCTOR_HOME."
+    cmds:
+      - task: clean
+      - task: setup-home
+
   uninstall:
     desc: Stop server, remove AppImage, clean .bashrc, remove venv data.
     cmds:
@@ -375,6 +386,11 @@ tasks:
         echo "con-pilot started (PID $!), logging to $LOG"
 
   # ── Lifecycle helpers ────────────────────────────────────────────────────────
+
+  clean:
+    desc: Stop every running con-pilot instance (AppImage + python module + debugpy listener) and prepare the system for a clean start.
+    cmds:
+      - "{{.ROOT_DIR}}/.vscode/clean.sh"
 
   stop:
     desc: Stop the running con-pilot serve process.
@@ -792,13 +808,14 @@ tasks:
   install:dev:
     desc: "Install the most recent dev AppImage from releases/v*-dev/ into CONDUCTOR_HOME and restart the service."
     cmds:
+      - task: _install-env
       - |
         set -e
         # Locate the most recent dev AppImage built under releases/v*-dev/.
         DEV_APPIMAGE="$(ls -1t {{.ROOT_DIR}}/releases/v*-dev/con-pilot-*-x86_64.AppImage 2>/dev/null | head -n 1 || true)"
         if [[ -z "$DEV_APPIMAGE" ]]; then
           echo "Error: no dev AppImage found under releases/v*-dev/."
-          echo "Build one first with:  task build:dev"
+          echo "Build one first with:  task release:dev"
           exit 1
         fi
         echo "Installing dev AppImage: $DEV_APPIMAGE"

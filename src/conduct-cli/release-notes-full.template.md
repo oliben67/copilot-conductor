@@ -24,7 +24,7 @@
 - Automatic sync cycle creates, retires, and restores `.agent.md` files
 - System agents (global scope) and project agents (project-scoped)
 - Sidekick agent designation for development assistance
-- Agent naming templates with `[scope:project]` and `[rank]` placeholders
+- Agent naming templates with `[scope]` and `[rank]` placeholders
 
 ### Security
 - Admin key protection for system agent modifications

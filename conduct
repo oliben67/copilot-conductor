@@ -50,6 +50,7 @@ Service commands:
   logs [-n N] [-f]           Show service logs (last 10 lines; -f to follow)
   cron <subcommand>          Manage scheduled cron jobs (see 'conduct cron --help')
   tasks <subcommand>         Manage tasks defined in conductor.yaml (see 'conduct tasks --help')
+  documents <subcommand>     Manage agent-saved documents (see 'conduct documents --help')
   agents show --all [-f]     List all agents (-f JSON indent=2)
   agents show <name> [-f]    Show details for a single agent (-f JSON indent=2)
   agents config show [name] [-j]
@@ -319,6 +320,61 @@ Examples:
 EOF
 }
 
+usage_documents() {
+  cat <<EOF
+conduct documents — Agent document store management
+
+Usage:
+  conduct documents list [-j]
+  conduct documents get <id> [-j]
+  conduct documents status <id> [-j]
+  conduct documents find --path PATH [--pattern GLOB] [-j]
+  conduct documents save --name NAME --type MIME --path DIR --source SRC [--comment TEXT] --file FILE [-j]
+  conduct documents update <id> [--type MIME] [--comment TEXT] [--source SRC] [--file FILE] [-j]
+  conduct documents delete <id> [--delete-file] --key KEY [-j]
+  conduct documents endpoints [-j]
+
+Subcommands:
+  list       List all registered documents (newest first)
+  get        Get a single document record by UUID
+  status     Poll workflow status for a queued document (pending→processing→completed|failed)
+  find       Search documents under a path with optional filename wildcard
+  save       Upload a file and register it in the document store
+  update     Update metadata and/or replace file content for an existing document
+  delete     Remove a document record (and optionally the file on disk); requires --key
+  endpoints  Print the OpenAPI-compatible descriptor for the documents API
+
+Options:
+  --name NAME      File name (no path separators)
+  --type MIME      MIME content-type (e.g. text/markdown, application/json)
+  --path DIR       Target or search directory (absolute or relative to CONDUCTOR_HOME)
+  --source SRC     Origin identifier (agent name, tool, URL)
+  --comment TEXT   Optional free-form notes
+  --file FILE      Local file to upload as the document body (use - for stdin)
+  --pattern GLOB   Shell-style wildcard for file name (e.g. '*.md', 'report-*')
+  --delete-file    Also remove the file from disk when deleting a record
+  --key KEY        Admin key (required for delete)
+  -j, --json       Output raw JSON response (default is human-readable)
+  --help, -h       Show this help message
+
+Document status lifecycle:
+  pending → processing → completed
+                       ↘ failed (check 'error' field)
+
+Examples:
+  conduct documents list
+  conduct documents get 3f2a1b4c-8d7e-4f5a-9c2b-1e3d5f7a9c0b
+  conduct documents status 3f2a1b4c-8d7e-4f5a-9c2b-1e3d5f7a9c0b
+  conduct documents find --path reports --pattern '*.md'
+  conduct documents save --name report.md --type text/markdown \\
+    --path /home/user/.conductor/reports --source conductor \\
+    --comment 'nightly report' --file ./report.md
+  conduct documents update 3f2a1b4c --comment 'revised' --file ./updated.md
+  conduct documents delete 3f2a1b4c --delete-file --key \$ADMIN_KEY
+  conduct documents endpoints [-j]
+EOF
+}
+
 usage_end_points() {
   cat <<EOF
 conduct end-points — API endpoint discovery and checks
@@ -329,7 +385,6 @@ Usage:
 Subcommands:
   list                      List endpoint names, methods, paths, args, and body
   ping <endpoint-name>      Ping one endpoint by name and print HTTP status
-  show-me                   Call temporary dev diagnostics endpoint (/show-me)
 
 Options:
   --help, -h    Show this help message
@@ -337,7 +392,6 @@ Options:
 Examples:
   conduct end-points list
   conduct end-points ping health
-  conduct end-points show-me
 EOF
 }
 
@@ -601,7 +655,6 @@ endpoint_spec() {
     reset) echo "POST ${API_PREFIX}/reset" ;;
     verify-key) echo "POST ${API_PREFIX}/verify-key" ;;
     create-user) echo "POST ${API_PREFIX}/create-user" ;;
-    show-me) echo "GET ${API_PREFIX}/show-me" ;;
     config) echo "POST ${API_PREFIX}/config" ;;
     config-version) echo "GET ${API_PREFIX}/config/{version}" ;;
     config-diff) echo "POST ${API_PREFIX}/config/diff" ;;
@@ -612,6 +665,15 @@ endpoint_spec() {
     snapshot-watcher) echo "GET ${API_PREFIX}/snapshot/watcher" ;;
     snapshot-watcher-start) echo "POST ${API_PREFIX}/snapshot/watcher/start" ;;
     snapshot-watcher-stop) echo "POST ${API_PREFIX}/snapshot/watcher/stop" ;;
+    conductor-sessions) echo "GET ${API_PREFIX}/conductor/sessions" ;;
+    documents) echo "GET ${API_PREFIX}/documents" ;;
+    document-save) echo "POST ${API_PREFIX}/documents" ;;
+    document-status) echo "GET ${API_PREFIX}/documents/status" ;;
+    document-find) echo "GET ${API_PREFIX}/documents/find" ;;
+    document-endpoints) echo "GET ${API_PREFIX}/documents/endpoints" ;;
+    document-detail) echo "GET ${API_PREFIX}/documents/{id}" ;;
+    document-update) echo "PATCH ${API_PREFIX}/documents/{id}" ;;
+    document-delete) echo "DELETE ${API_PREFIX}/documents/{id}" ;;
     *) return 1 ;;
   esac
 }
@@ -667,7 +729,6 @@ cmd_end_points() {
     reset                     | POST ${API_PREFIX}/reset                  | args: none                                   | body: {"role":"<role>","key":"<key>","project":"<optional>"}
     verify-key                | POST ${API_PREFIX}/verify-key             | args: none                                   | body: {"key":"<key>"}
     create-user               | POST ${API_PREFIX}/create-user            | args: header X-Install-Key:<key>             | body: {"username":"<user>","password":"<pass>","active":true}
-    show-me                   | GET  ${API_PREFIX}/show-me                | args: env CON_PILOT_DEV_SHOW_ME=1            | body: none
     config                    | POST ${API_PREFIX}/config                 | args: none                                   | body: {"config":{...}}
     config-version            | GET  ${API_PREFIX}/config/{version}       | args: version=<id>                           | body: none
     config-diff               | POST ${API_PREFIX}/config/diff            | args: none                                   | body: {"left_version":"<id>","right_version":"<id>"}
@@ -678,6 +739,15 @@ cmd_end_points() {
     snapshot-watcher          | GET  ${API_PREFIX}/snapshot/watcher       | args: none                                   | body: none
     snapshot-watcher-start    | POST ${API_PREFIX}/snapshot/watcher/start | args: none                                   | body: none
     snapshot-watcher-stop     | POST ${API_PREFIX}/snapshot/watcher/stop  | args: none                                   | body: none
+    conductor-sessions        | GET  ${API_PREFIX}/conductor/sessions      | args: none                                   | body: none
+    documents                 | GET  ${API_PREFIX}/documents               | args: none                                   | body: none
+    document-save             | POST ${API_PREFIX}/documents               | args: ?name=<name>&document_type=<mime>&path=<dir>&source=<src>&comment=<text> | body: raw file content
+    document-status           | GET  ${API_PREFIX}/documents/status        | args: ?id=<uuid>                             | body: none
+    document-find             | GET  ${API_PREFIX}/documents/find          | args: ?path=<dir>&pattern=<glob>             | body: none
+    document-endpoints        | GET  ${API_PREFIX}/documents/endpoints     | args: none                                   | body: none
+    document-detail           | GET  ${API_PREFIX}/documents/{id}          | args: id=<uuid>                              | body: none
+    document-update           | PATCH ${API_PREFIX}/documents/{id}         | args: id=<uuid>, ?document_type=&comment=&source= | body: new file content (optional)
+    document-delete           | DELETE ${API_PREFIX}/documents/{id}        | args: id=<uuid>, ?delete_file=true, header X-Admin-Key:<key> | body: none
 EOF
       ;;
     ping)
@@ -703,39 +773,6 @@ EOF
         exit 1
       fi
       echo "Endpoint '$1' reachable at ${path} (HTTP ${code})."
-      ;;
-    show-me)
-      local output body code
-      for url in "${API_URL}/show-me" "${BASE_URL}/show-me" "${BASE_URL}/v1/show-me"; do
-        if output="$(curl -sS --connect-timeout 2 --max-time 10 "$url" -w $'\n%{http_code}' 2>/dev/null)"; then
-          code="${output##*$'\n'}"
-          body="${output%$'\n'*}"
-          [[ "$code" != "404" ]] && break
-        fi
-      done
-
-      if [[ -z "${code:-}" ]]; then
-        echo "show-me failed: could not reach ${API_URL}/show-me" >&2
-        exit 1
-      fi
-
-      if [[ "$code" != "200" ]]; then
-        if [[ "$code" == "404" ]]; then
-          echo "show-me unavailable: set CON_PILOT_DEV_SHOW_ME=1 on the running service" >&2
-        else
-          echo "show-me failed: HTTP ${code}" >&2
-        fi
-        if [[ -n "$body" ]]; then
-          echo "$body" >&2
-        fi
-        exit 1
-      fi
-
-      if command -v jq >/dev/null 2>&1; then
-        echo "$body" | jq --indent 2 .
-      else
-        echo "$body"
-      fi
       ;;
     *)
       echo "Unknown end-points command: $subcmd" >&2
@@ -873,7 +910,7 @@ cmd_agents() {
 
   local subcmd=""
   case "$1" in
-    show|config) subcmd="$1"; shift ;;
+    show|config|sessions) subcmd="$1"; shift ;;
     -h|--help) usage_agents; exit 0 ;;
     *)
       echo "Error: Unknown agents subcommand '$1'" >&2
@@ -884,8 +921,48 @@ cmd_agents() {
 
   if [[ "$subcmd" == "show" ]]; then
     _cmd_agents_show "$@"
+  elif [[ "$subcmd" == "sessions" ]]; then
+    _cmd_agents_sessions "$@"
   else
     _cmd_agents_config "$@"
+  fi
+}
+
+_cmd_agents_sessions() {
+  local json=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) echo "Usage: conduct agents sessions [-j]"; exit 0 ;;
+      -j|--json) json="1"; shift ;;
+      *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+
+  local response
+  response=$(api_get "/conductor/sessions") || true
+  if [[ -z "$response" ]]; then
+    echo "Error: Could not reach con-pilot service at $BASE_URL" >&2
+    exit 1
+  fi
+
+  if [[ -n "$json" ]]; then
+    print_json_pretty "$response"
+  else
+    echo "$response" | jq -r '
+      "Conductor session:",
+      (if .conductor then
+        "  \(.conductor.role): \(.conductor.agent_name // "(unnamed)") (session: \(.conductor.session_id // "n/a"))"
+      else
+        "  (none)"
+      end),
+      "",
+      "Registered sessions (\(.registered | length)):",
+      (if (.registered | length) == 0 then
+        "  (none)"
+      else
+        .registered[] | "  \(.role): \(.agent_name // "(unnamed)") (session: \(.session_id // "n/a"))"
+      end)
+    '
   fi
 }
 
@@ -2176,6 +2253,228 @@ _tasks_dispatcher_drain() {
   fi
 }
 
+# ── Documents command ─────────────────────────────────────────────────────────
+
+_doc_format() {
+  # $1 = raw JSON, $2 = json flag
+  local payload="$1" json_flag="$2"
+  if [[ "$json_flag" == "1" ]]; then
+    print_json_pretty "$payload"
+    return
+  fi
+  if command -v jq >/dev/null 2>&1 && printf '%s' "$payload" | jq -e . >/dev/null 2>&1; then
+    local id name fp ct src cmt ca st err
+    id="$(printf '%s' "$payload" | jq -r '.id // empty')"
+    name="$(printf '%s' "$payload" | jq -r '.name // empty')"
+    fp="$(printf '%s' "$payload" | jq -r '.file_path // empty')"
+    ct="$(printf '%s' "$payload" | jq -r '.content_type // empty')"
+    src="$(printf '%s' "$payload" | jq -r '.source // empty')"
+    cmt="$(printf '%s' "$payload" | jq -r '.comment // ""')"
+    ca="$(printf '%s' "$payload" | jq -r '.created_at // empty')"
+    st="$(printf '%s' "$payload" | jq -r '.status // empty')"
+    err="$(printf '%s' "$payload" | jq -r '.error // ""')"
+    printf 'ID:           %s\nName:         %s\nPath:         %s\nType:         %s\nSource:       %s\nComment:      %s\nCreated:      %s\nStatus:       %s\n' \
+      "$id" "$name" "$fp" "$ct" "$src" "$cmt" "$ca" "$st"
+    [[ -n "$err" ]] && printf 'Error:        %s\n' "$err"
+  else
+    printf '%s\n' "$payload"
+  fi
+}
+
+_doc_list_format() {
+  local payload="$1" json_flag="$2"
+  if [[ "$json_flag" == "1" ]]; then
+    print_json_pretty "$payload"
+    return
+  fi
+  if command -v jq >/dev/null 2>&1 && printf '%s' "$payload" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "$payload" | jq -r '.documents[] | "\(.status)\t\(.id)\t\(.name)\t\(.source)\t\(.created_at)"' \
+      | awk -F'\t' 'BEGIN{printf "%-11s  %-36s  %-30s  %-20s  %s\n","STATUS","ID","NAME","SOURCE","CREATED"} {printf "%-11s  %-36s  %-30s  %-20s  %s\n",$1,$2,$3,$4,$5}'
+  else
+    printf '%s\n' "$payload"
+  fi
+}
+
+cmd_documents() {
+  if [[ $# -eq 0 ]]; then
+    usage_documents
+    exit 0
+  fi
+
+  case "$1" in -h|--help|help) usage_documents; exit 0 ;; esac
+
+  local subcmd="$1"; shift
+  local json_flag=0
+  local DOC_ID="" NAME="" MIME="" DOC_PATH="" SOURCE="" COMMENT="" FILE="" PATTERN="" DELETE_FILE=0 ADMIN_KEY=""
+  local positional=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -j|--json)        json_flag=1; shift ;;
+      --name)           NAME="$2"; shift 2 ;;
+      --type)           MIME="$2"; shift 2 ;;
+      --path)           DOC_PATH="$2"; shift 2 ;;
+      --source)         SOURCE="$2"; shift 2 ;;
+      --comment)        COMMENT="$2"; shift 2 ;;
+      --file)           FILE="$2"; shift 2 ;;
+      --pattern)        PATTERN="$2"; shift 2 ;;
+      --delete-file)    DELETE_FILE=1; shift ;;
+      --key)            ADMIN_KEY="$2"; shift 2 ;;
+      --key=*)          ADMIN_KEY="${1#--key=}"; shift ;;
+      *)                positional+=("$1"); shift ;;
+    esac
+  done
+
+  [[ ${#positional[@]} -gt 0 ]] && DOC_ID="${positional[0]}"
+
+  case "$subcmd" in
+    list)
+      local resp
+      resp="$(api_get "/documents")" || { echo "Error: could not reach documents API" >&2; exit 1; }
+      _doc_list_format "$resp" "$json_flag"
+      ;;
+
+    get)
+      [[ -z "$DOC_ID" ]] && { echo "Usage: conduct documents get <id>" >&2; exit 1; }
+      local out http_status body
+      out="$(api_get_status "/documents/${DOC_ID}")" || true
+      http_status="$(printf '%s' "$out" | head -1)"
+      body="$(printf '%s' "$out" | tail -n +2)"
+      if [[ "$http_status" == "200" ]]; then
+        _doc_format "$body" "$json_flag"
+      elif [[ "$http_status" == "404" ]]; then
+        echo "Document '${DOC_ID}' not found." >&2; exit 1
+      else
+        echo "Error: HTTP ${http_status}" >&2; exit 1
+      fi
+      ;;
+
+    status)
+      [[ -z "$DOC_ID" ]] && { echo "Usage: conduct documents status <id>" >&2; exit 1; }
+      local out http_status body
+      out="$(api_get_status "/documents/status?id=${DOC_ID}")" || true
+      http_status="$(printf '%s' "$out" | head -1)"
+      body="$(printf '%s' "$out" | tail -n +2)"
+      if [[ "$http_status" == "200" ]]; then
+        _doc_format "$body" "$json_flag"
+      elif [[ "$http_status" == "404" ]]; then
+        echo "Document '${DOC_ID}' not found." >&2; exit 1
+      else
+        echo "Error: HTTP ${http_status}" >&2; exit 1
+      fi
+      ;;
+
+    find)
+      [[ -z "$DOC_PATH" ]] && { echo "Error: --path is required" >&2; exit 1; }
+      local query="/documents/find?path=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$DOC_PATH" 2>/dev/null || printf '%s' "$DOC_PATH")"
+      [[ -n "$PATTERN" ]] && query+="&pattern=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$PATTERN" 2>/dev/null || printf '%s' "$PATTERN")"
+      local resp
+      resp="$(api_get "$query")" || { echo "Error: could not reach documents API" >&2; exit 1; }
+      _doc_list_format "$resp" "$json_flag"
+      ;;
+
+    save)
+      [[ -z "$NAME" ]]     && { echo "Error: --name is required" >&2; exit 1; }
+      [[ -z "$MIME" ]]     && { echo "Error: --type is required" >&2; exit 1; }
+      [[ -z "$DOC_PATH" ]] && { echo "Error: --path is required" >&2; exit 1; }
+      [[ -z "$SOURCE" ]]   && { echo "Error: --source is required" >&2; exit 1; }
+      local query="/documents?name=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$NAME" 2>/dev/null || printf '%s' "$NAME")"
+      query+="&document_type=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$MIME" 2>/dev/null || printf '%s' "$MIME")"
+      query+="&path=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$DOC_PATH" 2>/dev/null || printf '%s' "$DOC_PATH")"
+      query+="&source=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$SOURCE" 2>/dev/null || printf '%s' "$SOURCE")"
+      [[ -n "$COMMENT" ]] && query+="&comment=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$COMMENT" 2>/dev/null || printf '%s' "$COMMENT")"
+      local out http_status body resp
+      for url in "${API_URL}${query}" "${BASE_URL}${query}" "${BASE_URL}/v1${query}"; do
+        if [[ -z "$FILE" || "$FILE" == "-" ]]; then
+          out="$(curl -s --connect-timeout 2 --max-time 30 -X POST "$url" \
+            -H "Content-Type: ${MIME}" --data-binary @- -w $'\n%{http_code}')" || true
+        else
+          out="$(curl -s --connect-timeout 2 --max-time 30 -X POST "$url" \
+            -H "Content-Type: ${MIME}" --data-binary "@${FILE}" -w $'\n%{http_code}')" || true
+        fi
+        http_status="${out##*$'\n'}"; body="${out%$'\n'*}"
+        if [[ "$http_status" =~ ^2 ]]; then
+          _doc_format "$body" "$json_flag"; return 0
+        elif [[ "$http_status" =~ ^[0-9]+$ && "$http_status" != "000" ]]; then
+          echo "Error: HTTP ${http_status}" >&2; [[ -n "$body" ]] && echo "$body" >&2; exit 1
+        fi
+      done
+      echo "Error: could not reach documents API" >&2; exit 1
+      ;;
+
+    update)
+      [[ -z "$DOC_ID" ]] && { echo "Usage: conduct documents update <id> [options]" >&2; exit 1; }
+      local query="/documents/${DOC_ID}?"
+      [[ -n "$MIME" ]]    && query+="document_type=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$MIME" 2>/dev/null || printf '%s' "$MIME")&"
+      [[ -n "$COMMENT" ]] && query+="comment=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$COMMENT" 2>/dev/null || printf '%s' "$COMMENT")&"
+      [[ -n "$SOURCE" ]]  && query+="source=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$SOURCE" 2>/dev/null || printf '%s' "$SOURCE")&"
+      local out http_status body content_type_header="application/octet-stream"
+      [[ -n "$MIME" ]] && content_type_header="$MIME"
+      for url in "${API_URL}${query}" "${BASE_URL}${query}" "${BASE_URL}/v1${query}"; do
+        if [[ -z "$FILE" ]]; then
+          out="$(curl -s --connect-timeout 2 --max-time 30 -X PATCH "$url" \
+            -H "Content-Type: ${content_type_header}" -w $'\n%{http_code}')" || true
+        elif [[ "$FILE" == "-" ]]; then
+          out="$(curl -s --connect-timeout 2 --max-time 30 -X PATCH "$url" \
+            -H "Content-Type: ${content_type_header}" --data-binary @- -w $'\n%{http_code}')" || true
+        else
+          out="$(curl -s --connect-timeout 2 --max-time 30 -X PATCH "$url" \
+            -H "Content-Type: ${content_type_header}" --data-binary "@${FILE}" -w $'\n%{http_code}')" || true
+        fi
+        http_status="${out##*$'\n'}"; body="${out%$'\n'*}"
+        if [[ "$http_status" =~ ^2 ]]; then
+          _doc_format "$body" "$json_flag"; return 0
+        elif [[ "$http_status" =~ ^[0-9]+$ && "$http_status" != "000" ]]; then
+          echo "Error: HTTP ${http_status}" >&2; [[ -n "$body" ]] && echo "$body" >&2; exit 1
+        fi
+      done
+      echo "Error: could not reach documents API" >&2; exit 1
+      ;;
+
+    delete)
+      [[ -z "$DOC_ID" ]]   && { echo "Usage: conduct documents delete <id> --key KEY" >&2; exit 1; }
+      [[ -z "$ADMIN_KEY" ]] && { echo "Error: --key is required for delete" >&2; exit 1; }
+      local endpoint="/documents/${DOC_ID}"
+      [[ "$DELETE_FILE" == "1" ]] && endpoint+="?delete_file=true"
+      local out http_status body
+      out="$(api_delete_status_with_key "$endpoint" "$ADMIN_KEY")" || true
+      http_status="$(printf '%s' "$out" | head -1)"
+      body="$(printf '%s' "$out" | tail -n +2)"
+      case "$http_status" in
+        200) _doc_format "$body" "$json_flag" ;;
+        401) echo "Error: admin key required" >&2; exit 1 ;;
+        403) echo "Error: invalid admin key" >&2; exit 1 ;;
+        404) echo "Document '${DOC_ID}' not found." >&2; exit 1 ;;
+        *)   echo "Error: HTTP ${http_status}" >&2; exit 1 ;;
+      esac
+      ;;
+
+    endpoints)
+      local resp
+      resp="$(api_get "/documents/endpoints")" || { echo "Error: could not reach documents API" >&2; exit 1; }
+      if [[ "$json_flag" == "1" ]]; then
+        print_json_pretty "$resp"
+      else
+        if command -v jq >/dev/null 2>&1; then
+          printf '%s' "$resp" | jq -r '
+            .paths | to_entries[] | .key as $path | .value | to_entries[] |
+            .key as $method | .value |
+            "\(.summary // "")|\($method | ascii_upcase)|\($path)"
+          ' | awk -F'|' 'BEGIN{printf "%-40s  %-6s  %s\n","SUMMARY","METHOD","PATH"} {printf "%-40s  %-6s  %s\n",$1,$2,$3}'
+        else
+          print_json_pretty "$resp"
+        fi
+      fi
+      ;;
+
+    *)
+      echo "Unknown documents command: $subcmd" >&2
+      usage_documents >&2
+      exit 1
+      ;;
+  esac
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if [[ $# -eq 0 ]]; then
@@ -2191,12 +2490,14 @@ case "$1" in
   logs|log)  shift; cmd_logs "$@" ;;
   cron)      shift; cmd_cron "$@" ;;
   tasks)     shift; cmd_tasks "$@" ;;
+  documents) shift; cmd_documents "$@" ;;
   agents)    shift; cmd_agents "$@" ;;
   register)  shift; cmd_register "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
   end-points) shift; cmd_end_points "$@" ;;
   verify)    shift; cmd_verify "$@" ;;
   admin)     shift; cmd_admin "$@" ;;
+  help|--help|-h) usage ;;
   version|--version|-v)
     v="$(get_version)"
     echo "Conductor v${v}  (con-pilot v${v})"

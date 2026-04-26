@@ -35,6 +35,8 @@ Conductor manages a fleet of AI agents defined from a single configuration sourc
     - [reset](#reset)
   - [Agent editing \& security](#agent-editing--security)
   - [Cron jobs](#cron-jobs)
+  - [Document store](#document-store)
+  - [The `conduct` CLI — documents command](#the-conduct-cli--documents-command)
   - [Templates](#templates)
   - [Environment variables](#environment-variables)
   - [Running the tests](#running-the-tests)
@@ -45,15 +47,16 @@ Conductor manages a fleet of AI agents defined from a single configuration sourc
 
 - **Single source of truth** — all agents defined in one active configuration file (`conductor.json` by default)
 - **Automatic sync** — creates, retires, and restores `.agent.md` files every 15 minutes
-- **Flatpak packaging** — con-pilot runs in a sandboxed Flatpak with Python 3.14 and uv-based bootstrap
+- **AppImage packaging** — con-pilot ships as a self-contained AppImage with Python and uv-based bootstrap
 - **Self-extracting installer** — `setup.sh` bundles everything into a single ~23 MB file
 - **Install / Update / Uninstall** — full lifecycle via `setup.sh install`, `setup.sh update`, `setup.sh uninstall`
 - **Admin key security** — system agents protected by a UUID key; conductor agent permanently locked
 - **Cron scheduling** — TOML-based per-agent cron jobs dispatched automatically
 - **Project isolation** — trust boundaries enforced via `trust.json`; agents scoped per-project
 - **Versioned config** — `ConfigStore` tracks named configuration snapshots in `.scores/` with diff and rollback
-- **HTTP API** — FastAPI service mounted under `/api/v1` with health, auth, agent, project, config, snapshot, sync, and startup-proof endpoints
-- **`conduct` CLI** — user-facing operational CLI wrapping the HTTP API
+- **Document store** — async queue-backed document API; agents `POST` files and poll status until `completed`; SQLite registry at `documents.sqlite3`
+- **HTTP API** — FastAPI service mounted under `/api/v1` with health, auth, agent, project, config, snapshot, cron, tasks, documents, sync, and startup-proof endpoints
+- **`conduct` CLI** — user-facing operational CLI wrapping the HTTP API, including a full `documents` subcommand
 - **Pytest coverage** — unit + CLI integration tests isolated with `tmp_path` fixtures
 
 ---
@@ -62,7 +65,7 @@ Conductor manages a fleet of AI agents defined from a single configuration sourc
 
 ```bash
 # 1. Install from the self-extracting setup.sh
-./releases/v0.4.0/setup-0.4.0.sh install ~/.conductor
+./releases/v0.5.0/setup-0.5.0.sh install ~/.conductor
 
 # 2. Source the environment
 source ~/.bashrc
@@ -82,9 +85,9 @@ conduct status
 flowchart TD
     subgraph INSTALL["Deployment"]
         SH["setup.sh\nself-extracting installer"]
-        FP["Flatpak bundle\nio.conductor.ConPilot"]
+        AI["con-pilot.AppImage"]
         SH -->|extracts| HOME["~/.conductor/"]
-        SH -->|installs| FP
+        SH -->|installs| AI
     end
 
     subgraph RUNTIME["Runtime"]
@@ -99,10 +102,17 @@ flowchart TD
         PROJ[".github/projects/\nproject agents"]
     end
 
+    subgraph DOCSTORE["Document Store"]
+        DW["DocumentWorker\n(asyncio queue)"]
+        DB["documents.sqlite3\nregistry"]
+        DW -->|"writes file + updates status"| DB
+    end
+
     HOME --> RUNTIME
-    FP -->|"flatpak run"| API
+    AI -->|"AppImage run"| API
     API -->|"sync every 15m"| AGENTS
     API -->|"reads"| CJ["conductor.json"]
+    API -->|"enqueues WorkItem"| DW
 ```
 
 ---
@@ -274,7 +284,15 @@ Service commands:
   status                     Show whether con-pilot is running
   sync                       Trigger a one-shot sync cycle
   logs [-n N] [-f]           Show service logs (last 10 lines; -f to follow)
-  agents [-p PROJECT] [-j]   List all agents (-j for JSON)
+  cron <subcommand>          Manage scheduled cron jobs (see 'conduct cron --help')
+  tasks <subcommand>         Manage tasks defined in conductor.yaml (see 'conduct tasks --help')
+  documents <subcommand>     Manage agent-saved documents (see 'conduct documents --help')
+  agents show --all [-f]     List all agents (-f JSON indent=2)
+  agents show <name> [-f]    Show details for a single agent
+  agents config show [name] [-j]
+                             Show one/all agent configurations
+  agents config modify <name> [fields] --key KEY [-j]
+                             Modify one agent configuration
 
 Project commands:
   register <name> <dir>      Register a new project
@@ -286,6 +304,8 @@ Admin commands (require --key):
 
 General:
   version                    Show version information
+  end-points <subcommand>    API endpoint discovery and checks
+  verify <item> <value>      Verify an item value (currently: key)
   help                       Show this help message
 ```
 
@@ -381,6 +401,7 @@ graph TD
     HOME --> KEY["key\nsystem GUID (auto-generated)"]
     HOME --> VER["VERSION\ninstalled version"]
     HOME --> CONDUCT["conduct\noperational CLI"]
+    HOME --> DOC["documents.sqlite3\ndocument registry"]
     HOME --> GH[".github/"]
 
     GH --> TJ["trust.json\nregistered projects"]
@@ -438,7 +459,7 @@ agent:
 
   # ── Project agent with numbered instances ──────────────────────────────────
   developer:
-    name: "code-monkey-[scope:project]-agent-[rank]"
+    name: "code-monkey-[scope]-agent-[rank]"
     description: Writes production code …
     active: true
     sidekick: true                    # exported as SIDEKICK_AGENT_NAME
@@ -450,7 +471,7 @@ agent:
 
   # ── Single-instance project agent ──────────────────────────────────────────
   reviewer:
-    name: "nosy-parker-[scope:project]"
+    name: "nosy-parker-[scope]"
     description: Reviews PRs …
     active: true
     model: claude-opus-4.6
@@ -490,17 +511,17 @@ Agent `name` fields support placeholder tokens that are substituted at file-crea
 
 | Placeholder          | Substituted with                                             |
 | -------------------- | ------------------------------------------------------------ |
-| `[scope:project]`    | The current project name (e.g.`my-app`)                      |
+| `[scope]`    | The current project name (e.g.`my-app`)                      |
 | `[rank]`             | The instance number for multi-instance agents (e.g.`1`, `2`) |
 | Any unknown`[token]` | Removed; consecutive`-` are collapsed                        |
 
 **Examples:**
 
 ```
-"code-monkey-[scope:project]-agent-[rank]"
+"code-monkey-[scope]-agent-[rank]"
   → project=my-app, rank=2  →  "code-monkey-my-app-agent-2"
 
-"nosy-parker-[scope:project]"
+"nosy-parker-[scope]"
   → project=api              →  "nosy-parker-api"
 
 "sir"
@@ -590,15 +611,42 @@ All routes are mounted under `/api/v1` by default.
 
 **Core endpoints:**
 
-| Method | Path                    | Description                                   |
-| ------ | ----------------------- | --------------------------------------------- |
-| `GET`  | `/api/v1/health`        | Returns `{"status": "ok"}`                  |
-| `GET`  | `/api/v1/version`       | Returns service version information           |
-| `GET`  | `/api/v1/startup-proof` | Returns Copilot SDK startup/runtime evidence  |
-| `POST` | `/api/v1/sync`          | Trigger a manual sync cycle                   |
-| `POST` | `/api/v1/cron`          | Trigger a manual cron dispatch                |
-| `GET`  | `/api/v1/validate`      | Validate the active config against the schema |
-| `POST` | `/api/v1/validate`      | Validate a supplied config payload            |
+| Method    | Path                                    | Auth              | Description                                           |
+| --------- | --------------------------------------- | ----------------- | ----------------------------------------------------- |
+| `GET`     | `/api/v1/health`                        | —                 | Returns `{"status": "ok"}`                           |
+| `GET`     | `/api/v1/version`                       | —                 | Returns service version information                   |
+| `GET`     | `/api/v1/startup-proof`                 | —                 | Returns Copilot SDK startup/runtime evidence          |
+| `POST`    | `/api/v1/sync`                          | —                 | Trigger a manual sync cycle                           |
+| `POST`    | `/api/v1/cron`                          | —                 | Trigger a manual cron dispatch                        |
+| `GET`     | `/api/v1/validate`                      | —                 | Validate the active config against the schema         |
+| `POST`    | `/api/v1/validate`                      | —                 | Validate a supplied config payload                    |
+| `GET`     | `/api/v1/tasks`                         | —                 | List all configured tasks                             |
+| `GET`     | `/api/v1/tasks/{name}`                  | —                 | Get task detail                                       |
+| `POST`    | `/api/v1/tasks`                         | `X-Admin-Key`     | Register a new task                                   |
+| `PATCH`   | `/api/v1/tasks/{name}`                  | `X-Admin-Key`     | Update mutable task fields                            |
+| `DELETE`  | `/api/v1/tasks/{name}`                  | `X-Admin-Key`     | Remove a task and unregister its scheduler job        |
+| `POST`    | `/api/v1/tasks/{name}/run`              | `X-Admin-Key`     | Queue a task for immediate execution                  |
+| `GET`     | `/api/v1/tasks/dispatcher/status`       | —                 | Show live dispatcher state                            |
+| `POST`    | `/api/v1/tasks/dispatcher/drain`        | `X-Admin-Key`     | Force one drain pass of pending.log                   |
+| `GET`     | `/api/v1/cron/jobs`                     | —                 | List all cron jobs                                    |
+| `GET`     | `/api/v1/cron/jobs/{name}`              | —                 | Get cron job detail                                   |
+| `POST`    | `/api/v1/cron/jobs`                     | `X-Admin-Key`     | Create a new cron job                                 |
+| `PATCH`   | `/api/v1/cron/jobs/{name}`              | `X-Admin-Key`     | Update a cron job                                     |
+| `DELETE`  | `/api/v1/cron/jobs/{name}`              | `X-Admin-Key`     | Remove a cron job                                     |
+| `GET`     | `/api/v1/cron/logs`                     | —                 | Tail cron pending.log                                 |
+
+**Document store endpoints** (all under `/api/v1/documents`):
+
+| Method   | Path                        | Auth          | Description                                                      |
+| -------- | --------------------------- | ------------- | ---------------------------------------------------------------- |
+| `POST`   | `/api/v1/documents`         | —             | Register a document; enqueues async write; returns 201 + UUID    |
+| `GET`    | `/api/v1/documents`         | —             | List all documents (newest first)                                |
+| `GET`    | `/api/v1/documents/status`  | —             | Poll write status for `?id=<uuid>` (pending→processing→completed) |
+| `GET`    | `/api/v1/documents/find`    | —             | Find documents by `?path=<dir>&pattern=<glob>`                   |
+| `GET`    | `/api/v1/documents/endpoints` | —           | OpenAPI 3.1.0 self-descriptor for this group                     |
+| `GET`    | `/api/v1/documents/{id}`    | —             | Get a single document record by UUID                             |
+| `PATCH`  | `/api/v1/documents/{id}`    | —             | Update metadata and/or re-queue a new file write                 |
+| `DELETE` | `/api/v1/documents/{id}`    | `X-Admin-Key` | Delete record; `?delete_file=true` also removes the file         |
 
 Additional routes cover login, key verification (confirms a supplied key — the admin key itself is **never returned** by any endpoint), user creation, agents, project operations, config versions, and snapshots.
 
@@ -789,6 +837,116 @@ Commands that accept `--key`:
 | `reset`   |    no key    | `--key` required |  blocked  |
 
 `amend` is currently disabled and is not accepted by the CLI.
+
+---
+
+## Document store
+
+The document store lets AI agents persist files (reports, markdown notes, JSON data, images) via a simple HTTP API, with an **async write queue** so the agent is never blocked waiting for I/O.
+
+### Async write workflow
+
+```mermaid
+sequenceDiagram
+    participant A as Agent / conduct CLI
+    participant R as POST /documents
+    participant Q as DocumentWorker (asyncio queue)
+    participant F as File on disk
+    participant D as documents.sqlite3
+
+    A->>R: POST /documents?name=report.md&path=…&source=conductor
+    R->>D: INSERT (status=pending)
+    R-->>A: 201 {id, status:"pending"}
+    R->>Q: enqueue WorkItem(doc_id, file_path, content)
+    loop poll until completed|failed
+        A->>R: GET /documents/status?id=<uuid>
+        R-->>A: {status:"processing" | "completed" | "failed"}
+    end
+    Q->>F: write file (aiofiles)
+    Q->>D: UPDATE status=completed
+```
+
+1. `POST /documents` registers a **pending** record and immediately returns `201` with the UUID.
+2. A background `DocumentWorker` picks up the work item from an in-process `asyncio.Queue`.
+3. The worker writes the file with `aiofiles` then sets `status = completed` (or `failed` + `error`).
+4. The agent polls `GET /documents/status?id=<uuid>` until it sees a terminal state.
+5. Use `GET /documents/{id}` to read the full record, `PATCH /documents/{id}` to update metadata or re-queue a new write, and `DELETE /documents/{id}` (requires `X-Admin-Key`) to remove it.
+
+### Document record schema
+
+| Field          | Type            | Description                                              |
+| -------------- | --------------- | -------------------------------------------------------- |
+| `id`           | UUID string     | Unique document identifier                               |
+| `name`         | string          | File name (no path separators, e.g. `report-20260412.md`) |
+| `file_path`    | string          | Absolute path on disk where the file is written          |
+| `content_type` | string          | MIME type (e.g. `text/markdown`, `application/json`)     |
+| `source`       | string          | Origin label (agent name, tool name, URL)                |
+| `comment`      | string or null  | Optional free-form notes                                 |
+| `created_at`   | ISO 8601 string | Registration timestamp                                   |
+| `status`       | string          | `pending` · `processing` · `completed` · `failed`        |
+| `error`        | string or null  | Error message when `status = failed`                     |
+
+> **Filename convention:** avoid colons in file names. Use `YYYYMMDD-HHmmss` (not ISO 8601 with colons) to keep files compatible with all filesystems.
+
+---
+
+## The `conduct` CLI — documents command
+
+`conduct documents` is the user-facing wrapper for the document store API.
+
+```
+conduct documents — Agent document store management
+
+Subcommands:
+  list       List all registered documents (newest first)
+  get        Get a single document record by UUID
+  status     Poll workflow status for a queued document
+  find       Search documents under a path with optional filename wildcard
+  save       Upload a file and register it in the document store
+  update     Update metadata and/or replace file content for an existing document
+  delete     Remove a document record (and optionally the file on disk); requires --key
+  endpoints  Print the OpenAPI-compatible descriptor for the documents API
+```
+
+**Examples:**
+
+```bash
+# List all documents
+conduct documents list
+
+# Save a markdown report
+conduct documents save \
+  --name "report-20260412-143000.md" \
+  --type text/markdown \
+  --path "$HOME/.conductor/reports" \
+  --source conductor \
+  --comment "nightly activity digest" \
+  --file ./nightly-report.md
+
+# Check status of the queued write
+conduct documents status 3f2a1b4c-8d7e-4f5a-9c2b-1e3d5f7a9c0b
+
+# Find all markdown files under reports/
+conduct documents find --path "$HOME/.conductor/reports" --pattern '*.md'
+
+# Retrieve a record
+conduct documents get 3f2a1b4c-8d7e-4f5a-9c2b-1e3d5f7a9c0b
+
+# Update only the comment (no new file)
+conduct documents update 3f2a1b4c-8d7e-4f5a-9c2b-1e3d5f7a9c0b --comment 'revised'
+
+# Replace the file content (re-queues a new write)
+conduct documents update 3f2a1b4c-8d7e-4f5a-9c2b-1e3d5f7a9c0b --file ./updated.md
+
+# Delete a record (keep file)
+conduct documents delete 3f2a1b4c-8d7e-4f5a-9c2b-1e3d5f7a9c0b --key $ADMIN_KEY
+
+# Delete a record and remove the file from disk
+conduct documents delete 3f2a1b4c-8d7e-4f5a-9c2b-1e3d5f7a9c0b --delete-file --key $ADMIN_KEY
+
+# See all available document endpoints in OpenAPI format
+conduct documents endpoints
+```
 
 ---
 
