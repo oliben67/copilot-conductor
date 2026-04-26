@@ -272,7 +272,7 @@ class PendingDispatcher:
         entries = self._parse_entries(content, base_offset=offset)
         processed = failed = skipped = 0
 
-        if not self._copilot or not getattr(self._copilot, "_conductor_session", None):
+        if not self._copilot or not getattr(self._copilot, "conductor_session", None):
             log.debug(
                 "Conductor session unavailable; deferring %d entries", len(entries)
             )
