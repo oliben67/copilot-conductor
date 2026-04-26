@@ -28,7 +28,7 @@ models:
     - claude-opus-4.5
     - claude-opus-4.6
     - gemini-2
-  default_model: claude-opus-4.6
+  default_model: gpt-4.1
 
 agent:
   conductor:
@@ -41,7 +41,7 @@ agent:
       progress of tasks, handles any issues that arise, and makes decisions to
       optimize the workflow based on the current state of the system.
     active: true
-    model: claude-opus-4.6
+    model: gpt-4.1
     scope: system
     # Conductor has all permissions by default - no explicit permissions needed
 
@@ -51,7 +51,7 @@ agent:
       Manages version control operations including commits, branches, merges,
       and pull requests.
     active: true
-    model: claude-opus-4.6
+    model: gpt-4.1
     scope: project
     permissions:
       - git_commit
@@ -64,24 +64,24 @@ agent:
       - agent_invoke
 
   reviewer:
-    name: nosy-parker-[scope:project]
+    name: nosy-parker-[scope]
     description: >-
       Reviews code changes and provides feedback on pull requests.
     active: true
-    model: claude-opus-4.6
+    model: gpt-4.1
     scope: project
     permissions:
       - git_pr_review
       - agent_invoke
 
   support:
-    name: dogsbody-[scope:system]-[rank]
+    name: dogsbody-[rank]
     description: >-
       The agent responsible for handling miscellaneous tasks and supporting other
       agents in their operations. This agent will assist with various duties,
       ensuring that the workflow remains smooth and efficient.
     active: true
-    model: claude-opus-4.6
+    model: gpt-4.1
     scope: system
     permissions:
       - file_create
@@ -94,7 +94,7 @@ agent:
       max: 2
 
   developer:
-    name: code-monkey-[scope:project]-agent-[rank]
+    name: code-monkey-[scope]-agent-[rank]
     description: >-
       The agent responsible for the production of code, including the
       implementation of features, bug fixes, and other development tasks. This
@@ -102,7 +102,7 @@ agent:
       functional, efficient, and adheres to project standards.
     active: true
     sidekick: true
-    model: claude-opus-4.6
+    model: gpt-4.1
     scope: project
     instructions: >-
       Follow the session setup defined in `$CONDUCTOR_HOME/.github/copilot-instructions.md`.
@@ -123,14 +123,14 @@ agent:
       - agent_invoke
 
   agile:
-    name: wool-gatherer-[scope:project]
+    name: wool-gatherer-[scope]
     description: >-
       The agent responsible for managing agile processes, including sprint
       planning, task prioritization, and progress tracking. This agent will
       ensure that the team follows agile methodologies and that projects are
       delivered on time and within scope.
     active: true
-    model: claude-opus-4.6
+    model: gpt-4.1
     scope: project
     permissions:
       - file_create
@@ -140,13 +140,13 @@ agent:
       - agent_invoke
 
   tester:
-    name: guy-fawkes-[scope:project]-[rank]
+    name: guy-fawkes-[scope]-[rank]
     description: >-
       The agent responsible for testing code, including unit tests, integration
       tests, and other quality assurance tasks. This agent will ensure that the
       code is reliable, functional, and meets project standards.
     active: true
-    model: claude-opus-4.6
+    model: gpt-4.1
     scope: project
     instances:
       min: 1
@@ -165,7 +165,7 @@ agent:
       Resolves conflicts and makes decisions when there are disagreements
       between other agents.
     active: true
-    model: claude-opus-4.6
+    model: gpt-4.1
     scope: system
     permissions:
       - agent_invoke
@@ -212,14 +212,21 @@ tasks:
     agent: conductor
     description: Check the health of all other agents defined in the configuration
     instructions: >-
-      Iterate over every agent defined in conductor.yaml (excluding the
+      Iterate over every agent defined in the current session (excluding the
       conductor itself). For each active agent, verify that it is reachable
       and responsive, confirm its configured model is authorized, and record
-      any unhealthy or unresponsive agents. Write a summary report to
-      `$CONDUCTOR_HOME/reports/agent-health-check-<UTC-timestamp>.md`
-      (create the `reports/` directory if missing) noting the status of each
-      agent and escalate persistent failures.
-    cron: "*/5 * * * *"
+      any unhealthy or unresponsive agents.
+      To save the report use the http_request tool: (1) create the reports directory —
+      method=POST, path=/api/v1/documents/directories, params={"path":"reports"};
+      (2) write the report — method=POST, path=/api/v1/documents,
+      params={"name":"agent-health-check-<YYYYMMDD-HHmmss>.md","document_type":"text/markdown","path":"reports","source":"conductor"},
+      body=<report content>;
+      (3) poll status — method=GET, path=/api/v1/documents/status, params={"id":"<uuid>"}
+      until status is completed or failed.
+      Use ONLY the http_request tool for file/directory operations. Do NOT use bash, curl,
+      shell commands, or any filesystem tools.
+      Escalate persistent agent failures to the user.
+    cron: "*/1 * * * *"
     permissions:
       - workspace_read
       - codebase_context
