@@ -9,12 +9,19 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+from con_pilot.agents.service import expand_name
 import pytest
 import yaml
 
 from con_pilot.conductor import ConPilot
 from con_pilot.main import main
-from con_pilot.conductor.models import ConductorConfig, CronConfig
+from con_pilot.conductor.models import (
+    AgentConfig,
+    Conductor,
+    ConductorConfig,
+    CronConfig,
+    ModelsConfig,
+)
 from con_pilot.conductor.paths import PathResolver
 
 # ── Minimal conductor.json shared across all tests ───────────────────────────
@@ -31,7 +38,7 @@ _CONFIG = {
             "augmenting": True,
         },
         "developer": {
-            "name": "code-monkey-[scope:project]-agent-[rank]",
+            "name": "code-monkey-[scope]-agent-[rank]",
             "description": "Developer agent.",
             "active": True,
             "scope": "project",
@@ -39,7 +46,7 @@ _CONFIG = {
             "instances": {"max": 2},
         },
         "reviewer": {
-            "name": "reviewer-[scope:project]",
+            "name": "reviewer-[scope]",
             "description": "Reviewer agent.",
             "active": True,
             "scope": "project",
@@ -115,22 +122,19 @@ class TestCronConfig:
 
 class TestExpandName:
     def test_both_placeholders(self, pilot: ConPilot) -> None:
-        assert (
-            pilot._expand_name("x-[scope:project]-[rank]", project="app", rank=2)
-            == "x-app-2"
-        )
+        assert expand_name("x-[scope]-[rank]", project="app", rank=2) == "x-app-2"
 
     def test_missing_project_stripped(self, pilot: ConPilot) -> None:
-        assert pilot._expand_name("reviewer-[scope:project]") == "reviewer"
+        assert expand_name("reviewer-[scope]") == "reviewer"
 
     def test_missing_rank_stripped(self, pilot: ConPilot) -> None:
-        assert pilot._expand_name("x-[rank]") == "x"
+        assert expand_name("x-[rank]") == "x"
 
     def test_unknown_placeholder_removed(self, pilot: ConPilot) -> None:
-        assert pilot._expand_name("foo-[unknown]-bar") == "foo-bar"
+        assert expand_name("foo-[unknown]-bar") == "foo-bar"
 
     def test_only_placeholders_yields_empty(self, pilot: ConPilot) -> None:
-        assert pilot._expand_name("[scope:project]-[rank]") == ""
+        assert expand_name("[scope]-[rank]") == ""
 
 
 # ── _split_frontmatter ───────────────────────────────────────────────────────
@@ -138,13 +142,17 @@ class TestExpandName:
 
 class TestSplitFrontmatter:
     def test_splits_correctly(self, pilot: ConPilot) -> None:
+        from con_pilot.agents.service import split_frontmatter
+
         content = '---\nname: "x"\n---\n\n## Role\nBody.'
-        fm, body = pilot._split_frontmatter(content)
+        fm, body = split_frontmatter(content)
         assert fm.endswith("---")
         assert "## Role" in body
 
     def test_no_frontmatter(self, pilot: ConPilot) -> None:
-        fm, body = pilot._split_frontmatter("plain text")
+        from con_pilot.agents.service import split_frontmatter
+
+        fm, body = split_frontmatter("plain text")
         assert fm == ""
         assert body == "plain text"
 
@@ -328,47 +336,61 @@ class TestSync:
 
 class TestCron:
     def test_no_cron_agents_no_raise(self, pilot: ConPilot) -> None:
-        pilot._cfg = _CONFIG_MODEL
+        pilot._cfg = Conductor.from_config(
+            ConductorConfig(
+                models=ModelsConfig(
+                    authorized_models=_CONFIG["models"]["authorized_models"],
+                    default_model=_CONFIG["models"]["default_model"],
+                ),
+                agent={
+                    agent_name: AgentConfig(**agent_data)
+                    for agent_name, agent_data in _CONFIG["agent"].items()
+                },
+            )
+        )
         pilot.cron()
 
     def test_creates_placeholder_cron_file(self, pilot: ConPilot, home: Path) -> None:
-        pilot._cfg = ConductorConfig(
-            **{
-                "models": {
-                    "authorized_models": ["test-model"],
-                    "default_model": "test-model",
+        pilot._cfg = Conductor.from_config(
+            ConductorConfig(
+                models=ModelsConfig(
+                    authorized_models=["test-model"],
+                    default_model="test-model",
+                ),
+                agent={
+                    "conductor": AgentConfig(name="uppity", active=True),
+                    "support": AgentConfig(
+                        name="dogsbody",
+                        active=True,
+                        scope="system",
+                        cron=CronConfig(expression="0 9 * * *"),
+                    ),
                 },
-                "agent": {
-                    "conductor": {"name": "uppity", "active": True},
-                    "support": {
-                        "name": "dogsbody",
-                        "active": True,
-                        "scope": "system",
-                        "cron": {"expression": "0 9 * * *"},
-                    },
-                },
-            }
+            )
         )
         pilot.cron()
         assert (home / ".github" / "agents" / "cron" / "support.cron").exists()
 
     def test_skips_inactive_agent(self, pilot: ConPilot) -> None:
-        pilot._cfg = ConductorConfig(
-            **{
-                "models": {
-                    "authorized_models": ["test-model"],
-                    "default_model": "test-model",
+        pilot._cfg = Conductor.from_config(
+            ConductorConfig(
+                models=ModelsConfig(
+                    authorized_models=["test-model"],
+                    default_model="test-model",
+                ),
+                agent={
+                    "conductor": AgentConfig(
+                        name="uppity",
+                        active=True,
+                    ),
+                    "support": AgentConfig(
+                        name="dogsbody",
+                        active=False,
+                        scope="system",
+                        cron=CronConfig(expression="0 9 * * *"),
+                    ),
                 },
-                "agent": {
-                    "conductor": {"name": "uppity", "active": True},
-                    "support": {
-                        "name": "dogsbody",
-                        "active": False,
-                        "scope": "system",
-                        "cron": {"expression": "0 9 * * *"},
-                    },
-                },
-            }
+            )
         )
         pilot.cron()  # should not raise or create any cron files
 

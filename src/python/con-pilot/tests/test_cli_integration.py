@@ -40,7 +40,7 @@ _CONFIG = {
             "scope": "system",
         },
         "developer": {
-            "name": "code-monkey-[scope:project]-agent-[rank]",
+            "name": "code-monkey-[scope]-agent-[rank]",
             "description": "Developer agent.",
             "active": True,
             "scope": "project",
@@ -48,7 +48,7 @@ _CONFIG = {
             "instances": {"max": 2},
         },
         "reviewer": {
-            "name": "reviewer-[scope:project]",
+            "name": "reviewer-[scope]",
             "description": "Reviewer agent.",
             "active": True,
             "scope": "project",
