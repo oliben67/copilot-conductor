@@ -130,7 +130,17 @@ async function openConductorHome(): Promise<void> {
     }
   }
 
-  await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(resolved));
+  if (vscode.env.remoteName) {
+    // Over SSH / containers: revealFileInOS targets the local machine, not the remote.
+    // Open an integrated terminal at the conductor home instead.
+    const terminal = vscode.window.createTerminal({
+      name: 'Conductor Home',
+      cwd: resolved,
+    });
+    terminal.show();
+  } else {
+    await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(resolved));
+  }
 }
 
 async function selectConductorHome(): Promise<void> {
