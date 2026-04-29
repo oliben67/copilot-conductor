@@ -1,30 +1,44 @@
 import { copyFile, mkdir } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const artefactsDir = path.resolve(__dirname, '../../../artefacts/img');
+// All icons are derived from the clean conductor.svg.
+const cleanDir = path.resolve(__dirname, '../../../../.dev-artefacts/img/clean');
 const iconsDir = path.resolve(__dirname, '../icons');
+const conductorSvg = path.join(cleanDir, 'conductor.svg');
 
-const mappings = [
-  ['favicon-dark.svg', 'dark/icon.svg'],
-  ['favicon-light.svg', 'light/icon.svg'],
-  ['favicon.svg', 'icon.svg'],
-  ['web-app-manifest-512x512-dark.png', 'dark/icon.png'],
-  ['web-app-manifest-512x512-light.png', 'light/icon.png'],
-  ['web-app-manifest-512x512-light.png', 'icon.png']
+const svgTargets = [
+  'icon.svg',
+  'dark/icon.svg',
+  'light/icon.svg',
+  'activitybar.svg',
+];
+
+const pngTargets = [
+  'icon.png',
+  'dark/icon.png',
+  'light/icon.png',
 ];
 
 const syncIcons = async () => {
-  for (const [sourceFile, targetRelativePath] of mappings) {
-    const sourcePath = path.join(artefactsDir, sourceFile);
-    const targetPath = path.join(iconsDir, targetRelativePath);
+  // Copy SVG to all SVG icon slots
+  for (const rel of svgTargets) {
+    const target = path.join(iconsDir, rel);
+    await mkdir(path.dirname(target), { recursive: true });
+    await copyFile(conductorSvg, target);
+    console.log(`Copied conductor.svg -> ${rel}`);
+  }
 
-    await mkdir(path.dirname(targetPath), { recursive: true });
-    await copyFile(sourcePath, targetPath);
-    console.log(`Synced ${sourceFile} -> ${targetRelativePath}`);
+  // Generate PNGs at 512x512 using rsvg-convert
+  for (const rel of pngTargets) {
+    const target = path.join(iconsDir, rel);
+    await mkdir(path.dirname(target), { recursive: true });
+    execFileSync('rsvg-convert', ['-w', '512', '-h', '512', conductorSvg, '-o', target]);
+    console.log(`Generated PNG -> ${rel}`);
   }
 };
 

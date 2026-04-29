@@ -12,9 +12,6 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "extensionKind": [
-    "workspace"
-  ],
   "categories": [
     "Other"
   ],
@@ -29,16 +26,19 @@
         {
           "id": "conductor",
           "title": "Conductor",
-          "icon": "icons/icon.svg"
+          "icon": "icons/activitybar.svg"
         }
       ]
     },
     "views": {
       "conductor": [
         {
+          "id": "conductor.agentsView",
+          "name": "Agents"
+        },
+        {
           "id": "conductor.homeView",
-          "name": "Home",
-          "icon": "icons/icon.svg"
+          "name": ".github"
         }
       ]
     },
@@ -58,6 +58,13 @@
           "markdownDescription": "Path to the Conductor home directory. Supports `~` for the user's home directory. Defaults to `~/.conductor`.",
           "scope": "machine-overridable",
           "order": 1
+        },
+        "conductor.apiUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000/api/v1",
+          "markdownDescription": "Base URL of the con-pilot API (e.g. `http://127.0.0.1:8000/api/v1`). Used by the Agents panel.",
+          "scope": "machine-overridable",
+          "order": 2
         }
       }
     },
@@ -85,6 +92,17 @@
         "title": "Refresh",
         "category": "Conductor",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "conductor.refreshAgentsView",
+        "title": "Refresh Agents",
+        "category": "Conductor",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "conductor.openAgent",
+        "title": "Open Agent File",
+        "category": "Conductor"
       }
     ],
     "menus": {
@@ -94,6 +112,10 @@
         },
         {
           "command": "conductor.selectHome"
+        },
+        {
+          "command": "conductor.openAgent",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -111,6 +133,11 @@
           "command": "conductor.refreshHomeView",
           "when": "view == conductor.homeView",
           "group": "navigation@3"
+        },
+        {
+          "command": "conductor.refreshAgentsView",
+          "when": "view == conductor.agentsView",
+          "group": "navigation@1"
         }
       ]
     }
