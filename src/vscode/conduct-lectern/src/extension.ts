@@ -488,7 +488,7 @@ class AgentPropertiesPanel {
       : '<em>none</em>';
 
     const instructionsHtml = d.instructions
-      ? `<div class="md-body">${renderMd(d.instructions)}</div>`
+      ? `<div class="task-block"><div class="task-instructions">${renderMd(d.instructions)}</div></div>`
       : '<em>none</em>';
 
     const fileCell = agent.file_exists && agent.file_path
