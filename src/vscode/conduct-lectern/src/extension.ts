@@ -402,17 +402,17 @@ class AgentPropertiesPanel {
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
         .replace(/`([^`]+)`/g, '<code class="icode">$1</code>');
 
-    const lines = raw.split('\n');
+    const lines: string[] = raw.split('\n');
     const out: string[] = [];
     let i = 0;
     while (i < lines.length) {
-      const line = lines[i];
+      const line: string = lines[i] ?? '';
       // Fenced code block
       if (line.startsWith('```')) {
         const codeLines: string[] = [];
         i++;
-        while (i < lines.length && !lines[i].startsWith('```')) {
-          codeLines.push(esc(lines[i]));
+        while (i < lines.length && !(lines[i] ?? '').startsWith('```')) {
+          codeLines.push(esc(lines[i] ?? ''));
           i++;
         }
         out.push(`<pre class="code-block"><code>${codeLines.join('\n')}</code></pre>`);
@@ -422,16 +422,16 @@ class AgentPropertiesPanel {
       // Headings
       const hm = line.match(/^(#{1,6})\s+(.+)/);
       if (hm) {
-        const lvl = Math.min(hm[1].length + 2, 6);
-        out.push(`<h${lvl} class="md-h">${inline(hm[2])}</h${lvl}>`);
+        const lvl = Math.min((hm[1] ?? '').length + 2, 6);
+        out.push(`<h${lvl} class="md-h">${inline(hm[2] ?? '')}</h${lvl}>`);
         i++;
         continue;
       }
       // Unordered list
       if (/^[-*]\s+/.test(line)) {
         const items: string[] = [];
-        while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
-          items.push(`<li>${inline(lines[i].replace(/^[-*]\s+/, ''))}</li>`);
+        while (i < lines.length && /^[-*]\s+/.test(lines[i] ?? '')) {
+          items.push(`<li>${inline((lines[i] ?? '').replace(/^[-*]\s+/, ''))}</li>`);
           i++;
         }
         out.push(`<ul>${items.join('')}</ul>`);
@@ -440,8 +440,8 @@ class AgentPropertiesPanel {
       // Ordered list
       if (/^\d+\.\s+/.test(line)) {
         const items: string[] = [];
-        while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
-          items.push(`<li>${inline(lines[i].replace(/^\d+\.\s+/, ''))}</li>`);
+        while (i < lines.length && /^\d+\.\s+/.test(lines[i] ?? '')) {
+          items.push(`<li>${inline((lines[i] ?? '').replace(/^\d+\.\s+/, ''))}</li>`);
           i++;
         }
         out.push(`<ol>${items.join('')}</ol>`);
@@ -451,8 +451,8 @@ class AgentPropertiesPanel {
       if (line.trim() === '') { i++; continue; }
       // Paragraph
       const para: string[] = [];
-      while (i < lines.length && lines[i].trim() !== '' && !/^(#{1,6}|[-*]|\d+\.|```)/.test(lines[i])) {
-        para.push(inline(lines[i]));
+      while (i < lines.length && (lines[i] ?? '').trim() !== '' && !/^(#{1,6}|[-*]|\d+\.|```)/.test(lines[i] ?? '')) {
+        para.push(inline(lines[i] ?? ''));
         i++;
       }
       if (para.length) { out.push(`<p>${para.join('<br>')}</p>`); }
