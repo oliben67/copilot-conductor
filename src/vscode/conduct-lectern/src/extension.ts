@@ -46,6 +46,7 @@ interface AgentTask {
   name: string;
   description: string | null;
   cron: string | null;
+  instructions: string | null;
 }
 
 interface AgentInstances {
@@ -392,6 +393,73 @@ class AgentPropertiesPanel {
     return `<tr><td class="lbl">${label}</td><td>${value}</td></tr>`;
   }
 
+  /** Minimal Markdown → HTML renderer (no external dependencies). */
+  private static _renderMd(raw: string): string {
+    const esc = AgentPropertiesPanel._esc;
+    const inline = (s: string): string =>
+      esc(s)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`([^`]+)`/g, '<code class="icode">$1</code>');
+
+    const lines = raw.split('\n');
+    const out: string[] = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      // Fenced code block
+      if (line.startsWith('```')) {
+        const codeLines: string[] = [];
+        i++;
+        while (i < lines.length && !lines[i].startsWith('```')) {
+          codeLines.push(esc(lines[i]));
+          i++;
+        }
+        out.push(`<pre class="code-block"><code>${codeLines.join('\n')}</code></pre>`);
+        i++;
+        continue;
+      }
+      // Headings
+      const hm = line.match(/^(#{1,6})\s+(.+)/);
+      if (hm) {
+        const lvl = Math.min(hm[1].length + 2, 6);
+        out.push(`<h${lvl} class="md-h">${inline(hm[2])}</h${lvl}>`);
+        i++;
+        continue;
+      }
+      // Unordered list
+      if (/^[-*]\s+/.test(line)) {
+        const items: string[] = [];
+        while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+          items.push(`<li>${inline(lines[i].replace(/^[-*]\s+/, ''))}</li>`);
+          i++;
+        }
+        out.push(`<ul>${items.join('')}</ul>`);
+        continue;
+      }
+      // Ordered list
+      if (/^\d+\.\s+/.test(line)) {
+        const items: string[] = [];
+        while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+          items.push(`<li>${inline(lines[i].replace(/^\d+\.\s+/, ''))}</li>`);
+          i++;
+        }
+        out.push(`<ol>${items.join('')}</ol>`);
+        continue;
+      }
+      // Blank line
+      if (line.trim() === '') { i++; continue; }
+      // Paragraph
+      const para: string[] = [];
+      while (i < lines.length && lines[i].trim() !== '' && !/^(#{1,6}|[-*]|\d+\.|```)/.test(lines[i])) {
+        para.push(inline(lines[i]));
+        i++;
+      }
+      if (para.length) { out.push(`<p>${para.join('<br>')}</p>`); }
+    }
+    return out.join('\n');
+  }
+
   private static _buildHtml(agent: AgentInfo | AgentDetailResponse): string {
     const d = agent as AgentDetailResponse;
     const esc = AgentPropertiesPanel._esc;
@@ -405,17 +473,22 @@ class AgentPropertiesPanel {
       ? d.permissions.map((p) => `<span class="tag">${esc(p)}</span>`).join(' ')
       : '<em>none</em>';
 
+    const renderMd = AgentPropertiesPanel._renderMd.bind(AgentPropertiesPanel);
+
     const tasksHtml = d.tasks?.length
-      ? `<ul>${d.tasks.map((t) =>
-          `<li><strong>${esc(t.name)}</strong>` +
+      ? d.tasks.map((t) =>
+          `<div class="task-block">` +
+          `<div class="task-header"><strong>${esc(t.name)}</strong>` +
           (t.cron ? ` <span class="tag">${esc(t.cron)}</span>` : ' <span class="tag">manual</span>') +
-          (t.description ? `<br><small>${esc(t.description)}</small>` : '') +
-          `</li>`
-        ).join('')}</ul>`
+          `</div>` +
+          (t.description ? `<p class="task-desc">${esc(t.description)}</p>` : '') +
+          (t.instructions ? `<div class="task-instructions">${renderMd(t.instructions)}</div>` : '') +
+          `</div>`
+        ).join('')
       : '<em>none</em>';
 
     const instructionsHtml = d.instructions
-      ? `<pre class="instructions">${esc(d.instructions)}</pre>`
+      ? `<div class="md-body">${renderMd(d.instructions)}</div>`
       : '<em>none</em>';
 
     const fileCell = agent.file_exists && agent.file_path
@@ -439,10 +512,23 @@ class AgentPropertiesPanel {
   hr { border: none; border-top: 1px solid var(--vscode-panel-border); margin: 12px 0; }
   ul { margin: 0; padding-left: 18px; }
   li { margin: 4px 0; }
-  pre.instructions { white-space: pre-wrap; word-break: break-word; background: var(--vscode-textCodeBlock-background); padding: 8px 10px; border-radius: 4px; font-size: 0.85em; margin: 0; }
   .missing { color: var(--vscode-errorForeground); }
   .path { font-family: var(--vscode-editor-font-family, monospace); font-size: 0.85em; word-break: break-all; }
   .readonly-banner { background: var(--vscode-inputValidation-warningBackground, #6c4f1e); color: var(--vscode-inputValidation-warningForeground, #fff); border: 1px solid var(--vscode-inputValidation-warningBorder, #b89500); border-radius: 4px; padding: 6px 10px; margin-bottom: 14px; font-size: 0.9em; }
+  /* task cards */
+  .task-block { border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 8px 10px; margin: 6px 0; }
+  .task-header { margin-bottom: 4px; }
+  .task-desc { margin: 4px 0 6px; color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+  .task-instructions { border-top: 1px solid var(--vscode-panel-border); margin-top: 6px; padding-top: 6px; }
+  /* markdown rendering */
+  .md-body, .task-instructions { font-size: 0.9em; line-height: 1.5; }
+  .md-body p, .task-instructions p { margin: 4px 0; }
+  .md-h { font-size: 0.95em; text-transform: none; letter-spacing: 0; margin: 10px 0 4px; color: var(--vscode-foreground); }
+  .md-body ul, .md-body ol, .task-instructions ul, .task-instructions ol { margin: 4px 0; padding-left: 20px; }
+  .md-body li, .task-instructions li { margin: 2px 0; }
+  code.icode { background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 3px; font-family: var(--vscode-editor-font-family, monospace); font-size: 0.9em; }
+  pre.code-block { background: var(--vscode-textCodeBlock-background); padding: 8px 10px; border-radius: 4px; font-size: 0.85em; margin: 6px 0; overflow-x: auto; white-space: pre; }
+  pre.code-block code { font-family: var(--vscode-editor-font-family, monospace); }
 </style>
 </head>
 <body>
